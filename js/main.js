@@ -3,16 +3,16 @@
 // de sesión y conecta todos los módulos entre sí.
 // ============================================================================
 
-import { isFirebaseConfigured } from './firebase-config.js?v9';
+import { isFirebaseConfigured } from './firebase-config.js?v10';
 import {
   onAuthChange, getUserProfileName, logoutUser,
   registerUser, loginUser, friendlyAuthError
-} from './auth.js?v9';
-import { renderDashboard } from './dashboard.js?v9';
-import { renderAgenda } from './agenda.js?v9';
-import { renderHistorialSelect, renderHistorialList } from './historial.js?v9';
-import { renderCalendarioSelect, renderCalendarioMonth } from './calendario.js?v9';
-import { closeModal, showToast } from './ui-helpers.js?v9';
+} from './auth.js?v10';
+import { renderDashboard } from './dashboard.js?v10';
+import { renderAgenda } from './agenda.js?v10';
+import { renderHistorialSelect, renderHistorialList } from './historial.js?v10';
+import { renderCalendarioSelect, renderCalendarioMonth } from './calendario.js?v10';
+import { closeModal, showToast } from './ui-helpers.js?v10';
 
 // Red de seguridad global: cualquier error de JavaScript no controlado en
 // ningún punto de la app (o cualquier promesa rechazada sin su propio

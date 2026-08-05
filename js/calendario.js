@@ -2,14 +2,14 @@
 // calendario.js — selección de mes + vista mensual con notas por día.
 // ============================================================================
 
-import { getCurrentUser } from './auth.js?v9';
-import { getCalendarMonth, saveCalendarMonth } from './data-store.js?v9';
-import { captureElementToImage } from './export.js?v9';
-import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v9';
+import { getCurrentUser } from './auth.js?v10';
+import { getCalendarMonth, saveCalendarMonth } from './data-store.js?v10';
+import { captureElementToImage } from './export.js?v10';
+import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v10';
 import {
   MESES_ES, getAvailableMonths, getMonthMeta, getGuatemalaParts,
   escapeHtml, capitalize, debounce, fetchWithRetry, describeFirestoreError
-} from './utils.js?v9';
+} from './utils.js?v10';
 
 let monthState = { key: null, notes: {} };
 // Token del mes que se está cargando: si el usuario navega a otro mes

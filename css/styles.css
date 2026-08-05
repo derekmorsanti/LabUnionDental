@@ -394,6 +394,25 @@ table.agenda-table{ border-collapse: collapse; width: 100%; min-width: 640px; }
 .save-status.saving{ color: var(--brass-deep); }
 .save-status.saved{ color: var(--moss); }
 
+/* ---- Agendas divididas en tandas (p. ej. Cony AM/PM) ----
+   Cada panel reutiliza exactamente las mismas clases de arriba
+   (.agenda-header-bar, .table-scroll, table.agenda-table, .agenda-footer-bar),
+   así que el diseño de cada tabla individual no cambia; esto solo las
+   coloca una junto a otra. */
+.agenda-split-grid{
+  display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start;
+}
+.agenda-split-grid .agenda-panel + .agenda-panel{ margin-top: 0; }
+.agenda-panel-label{
+  display: inline-block; font-family: var(--font-mono); font-weight: 700; font-size: 10.5px;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--brass-deep);
+  background: var(--brass-wash); padding: 3px 9px; border-radius: 999px; margin-left: 8px;
+  vertical-align: middle;
+}
+@media (max-width: 980px){
+  .agenda-split-grid{ grid-template-columns: 1fr; gap: 32px; }
+}
+
 /* ==========================================================================
    Selección (historial / calendario landing)
    ========================================================================== */

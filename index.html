@@ -157,40 +157,19 @@
         <div class="card-grid" id="dashboard-cards"></div>
       </section>
 
-      <!-- ---------- AGENDA (tabla) ---------- -->
+      <!-- ---------- AGENDA (tabla) ----------
+           El contenido de esta vista (encabezado, tabla y pie) se genera
+           dinámicamente desde js/agenda.js dentro de #agenda-container.
+           Para la mayoría de agendas se pinta un solo panel (misma
+           estructura que antes); para Cony (Yesos) se pintan dos paneles
+           independientes — AM y PM — dentro de una rejilla de dos
+           columnas. Ver js/agenda.js. -->
       <section id="view-agenda" class="subview">
         <button class="back-link" data-nav="dashboard">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
           Agendas
         </button>
-        <div class="agenda-header-bar">
-          <div class="agenda-title-block">
-            <h2 id="agenda-title">—</h2>
-            <div class="agenda-subtitle" id="agenda-subtitle">—</div>
-          </div>
-          <div class="agenda-toolbar">
-            <div class="agenda-points-badge" id="agenda-points-badge">0 <span>pts</span></div>
-            <button class="btn btn-icon" id="btn-add-col" title="Agregar columna">+</button>
-            <button class="btn btn-icon" id="btn-remove-col" title="Eliminar última columna">−</button>
-            <button class="btn btn-outline btn-sm" id="btn-download-agenda">Descargar</button>
-            <button class="btn btn-brass btn-sm" id="btn-save-agenda">Guardar</button>
-          </div>
-        </div>
-
-        <div id="agenda-load-warning" class="hidden" style="margin-bottom:14px;"></div>
-
-        <div class="table-scroll">
-          <table class="agenda-table" id="agenda-table">
-            <thead id="agenda-thead"></thead>
-            <tbody id="agenda-tbody"></tbody>
-            <tfoot id="agenda-tfoot"></tfoot>
-          </table>
-        </div>
-
-        <div class="agenda-footer-bar">
-          <button class="btn btn-ghost btn-sm add-row-btn" id="btn-add-row">+ Agregar fila</button>
-          <span class="save-status" id="agenda-save-status"></span>
-        </div>
+        <div id="agenda-container"></div>
       </section>
 
       <!-- ---------- HISTORIAL: selección de persona ---------- -->
@@ -264,7 +243,7 @@
 <!-- ==========================================================================
      Módulos de la aplicación (ES6)
      ========================================================================== -->
-<script type="module" src="js/main.js?v9"></script>
+<script type="module" src="js/main.js?v10"></script>
 
 </body>
 </html>

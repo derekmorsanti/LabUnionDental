@@ -56,6 +56,12 @@ export const AGENDAS = [
   {
     id: 'cony', personName: 'Cony', processName: 'Yesos',
     hasPoints: false,
+    // La agenda de Cony se divide en dos tandas independientes (mañana y
+    // tarde). agenda.js usa esta bandera para renderizar dos tablas en vez
+    // de una sola; cada tabla guarda sus propios datos en Firestore bajo
+    // una dateKey con sufijo "-AM" / "-PM" (ver agenda.js, sección
+    // "Instancias AM/PM").
+    splitAmPm: true,
     leadingColumns: [
       { id: 'doctor', label: 'DOCTOR/PX', kind: 'text' },
       { id: 'cant', label: 'CANT.', kind: 'text', numeric: true, summedInFooter: true },
