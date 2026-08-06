@@ -2,19 +2,23 @@
 // calendario.js — selección de mes + vista mensual con notas por día.
 // ============================================================================
 
-import { getCurrentUser } from './auth.js?v10';
-import { getCalendarMonth, saveCalendarMonth } from './data-store.js?v10';
-import { captureElementToImage } from './export.js?v10';
-import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v10';
+import { getCurrentUser } from './auth.js?v12';
+import { getCalendarMonth, saveCalendarMonth } from './data-store.js?v12';
+import { forceReconnectFirestore } from './firebase-config.js?v12';
+import { captureElementToImage } from './export.js?v12';
+import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v12';
 import {
   MESES_ES, getAvailableMonths, getMonthMeta, getGuatemalaParts,
-  escapeHtml, capitalize, debounce, fetchWithRetry, describeFirestoreError
-} from './utils.js?v10';
+  escapeHtml, capitalize, debounce, fetchWithRetry, describeFirestoreError, withTimeout
+} from './utils.js?v12';
 
 let monthState = { key: null, notes: {} };
 // Token del mes que se está cargando: si el usuario navega a otro mes
 // antes de que termine, esa respuesta tardía se descarta.
 let monthToken = 0;
+// true una vez que las notas guardadas de Firestore terminaron de cargar
+// (o falló la carga) para el mes actualmente abierto.
+let notesReady = false;
 
 export function renderCalendarioSelect(navigate) {
   const grid = document.getElementById('calendario-month-grid');
@@ -35,6 +39,7 @@ export function renderCalendarioSelect(navigate) {
 
 export async function renderCalendarioMonth(monthKey, navigate) {
   const myToken = ++monthToken;
+  notesReady = false;
 
   const [y, m] = monthKey.split('-').map(Number);
   document.getElementById('calendario-month-title').textContent = `${capitalize(MESES_ES[m - 1])} ${y}`;
@@ -43,29 +48,16 @@ export async function renderCalendarioMonth(monthKey, navigate) {
   if (!currentUser) { showToast('Tu sesión no está activa. Vuelve a iniciar sesión.', true); return; }
   const uid = currentUser.uid;
 
-  let notes = {};
-  let loadError = null;
-  try {
-    notes = await fetchWithRetry(() => getCalendarMonth(uid, monthKey), { label: 'calendario' });
-  } catch (e) {
-    loadError = e;
-    console.error('Error al cargar calendario:', e);
-  }
-
-  if (myToken !== monthToken) return;
-
-  monthState = { key: monthKey, notes: { ...notes } };
-
+  // Pinta la rejilla del calendario de inmediato, sin esperar a Firestore,
+  // para que siempre haya un calendario visible aunque la carga de notas
+  // tarde o falle (p. ej. sin conexión) — igual que Agendas.
+  monthState = { key: monthKey, notes: {} };
   paintGrid(y, m);
 
-  if (loadError) {
-    setCalStatus(`No se pudieron cargar las notas guardadas — esto NO significa que se hayan borrado. ${describeFirestoreError(loadError)}`, 'error');
-    showToast('No se pudieron cargar las notas del mes.', true);
-  } else {
-    setCalStatus('');
-  }
+  const saveBtn = document.getElementById('btn-save-calendar');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.onclick = null; }
+  setCalStatus('Cargando…', 'saving');
 
-  document.getElementById('btn-save-calendar').onclick = () => saveNow();
   document.getElementById('btn-download-calendar').onclick = () => {
     openDownloadModal(async (format) => {
       try {
@@ -76,6 +68,44 @@ export async function renderCalendarioMonth(monthKey, navigate) {
       }
     });
   };
+
+  let notes = {};
+  let loadError = null;
+  try {
+    notes = await withTimeout(
+      fetchWithRetry(() => getCalendarMonth(uid, monthKey), { label: 'calendario' }),
+      10000,
+      'La carga del calendario tardó demasiado.'
+    );
+  } catch (e) {
+    loadError = e;
+    console.error('Error al cargar calendario:', e);
+  }
+
+  if (myToken !== monthToken) return;
+
+  notesReady = true;
+  // Combina las notas cargadas con cualquier nota que el usuario ya haya
+  // escrito localmente mientras se esperaba la respuesta de Firestore.
+  monthState = { key: monthKey, notes: { ...notes, ...monthState.notes } };
+  paintGrid(y, m);
+
+  if (saveBtn) { saveBtn.disabled = false; saveBtn.onclick = () => saveNow(); }
+
+  if (loadError) {
+    setCalStatus(
+      `No se pudieron cargar las notas guardadas — esto NO significa que se hayan borrado. ${describeFirestoreError(loadError)}`,
+      'error',
+      async () => {
+        setCalStatus('Reconectando…', 'saving');
+        try { await forceReconnectFirestore(); } catch (_) {}
+        renderCalendarioMonth(monthKey, navigate);
+      }
+    );
+    showToast('No se pudieron cargar las notas del mes.', true);
+  } else {
+    setCalStatus('');
+  }
 }
 
 function paintGrid(year, month) {
@@ -126,9 +156,14 @@ function openDayNoteModal(day, year, month) {
   });
 }
 
-const scheduleAutosave = debounce(() => saveNow(true), 1200);
+const scheduleAutosave = debounce(() => saveNow(true), 1500);
 
 async function saveNow(isAuto) {
+  // Mientras las notas guardadas todavía se están cargando, no autoguardar
+  // para no sobreescribir notas de otros días con un estado incompleto
+  // (el botón "Guardar" manual está deshabilitado hasta que esto termine).
+  if (!notesReady) return;
+
   setCalStatus('Guardando…', 'saving');
   const currentUser = getCurrentUser();
   if (!currentUser) {
@@ -139,18 +174,24 @@ async function saveNow(isAuto) {
   try {
     const uid = currentUser.uid;
     await fetchWithRetry(() => saveCalendarMonth(uid, monthState.key, monthState.notes), { retries: isAuto ? 1 : 2, label: 'guardar calendario' });
-    setCalStatus('Guardado ✓', 'saved');
+    setCalStatus(isAuto ? 'Guardado automáticamente' : 'Guardado ✓', 'saved');
     if (!isAuto) showToast('Calendario guardado');
   } catch (e) {
     console.error('Error al guardar calendario:', e);
-    setCalStatus(describeFirestoreError(e), 'error');
+    setCalStatus(isAuto ? 'No se pudo guardar automáticamente' : describeFirestoreError(e), 'error');
     if (!isAuto) showToast(describeFirestoreError(e), true);
   }
 }
 
-function setCalStatus(text, cls) {
+function setCalStatus(text, cls, retryFn) {
   const el = document.getElementById('calendar-save-status');
   if (!el) return;
-  el.textContent = text;
   el.className = 'save-status' + (cls ? ' ' + cls : '');
+  if (retryFn) {
+    el.innerHTML = `${escapeHtml(text)} <button class="btn btn-sm btn-outline" id="cal-retry-btn" style="margin-left:8px;">Reintentar</button>`;
+    const btn = document.getElementById('cal-retry-btn');
+    if (btn) btn.addEventListener('click', retryFn);
+  } else {
+    el.textContent = text;
+  }
 }

@@ -545,3 +545,67 @@ table.agenda-table{ border-collapse: collapse; width: 100%; min-width: 640px; }
   .calendar-day .d-note{ -webkit-line-clamp: 2; }
   .month-grid{ grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
 }
+
+/* ==========================================================================
+   Botón "AGREGAR" por fila (Agendas → enviar a otra agenda)
+   ========================================================================== */
+.row-actions-col{ width: 54px; white-space: nowrap; }
+.row-agregar-btn{
+  width: 22px; height: 22px; border-radius: 50%; border: none; background: transparent;
+  color: var(--brass-deep); cursor: pointer; font-size: 13px; line-height: 1; margin-right: 2px;
+}
+.row-agregar-btn:hover{ background: var(--brass-wash); }
+
+/* ==========================================================================
+   Control General
+   ========================================================================== */
+.cg-table{ font-size: 13px; }
+.cg-table td{ padding: 0; }
+.cg-table td input, .cg-table td select{
+  width: 100%; height: 100%; border: none; background: transparent; padding: 7px 8px;
+  font-size: 12.5px; font-family: inherit;
+}
+.cg-table td input:focus, .cg-table td select:focus{ background: var(--brass-wash); outline: none; }
+.cg-table tr.cg-row-cancelado{ opacity: 0.55; text-decoration: line-through; }
+.cg-table tr.cg-row-cancelado input, .cg-table tr.cg-row-cancelado select{ text-decoration: line-through; }
+.cg-abono-cell{ display: flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 4px; }
+.cg-abono-cell .btn-icon{ width: 24px; height: 24px; font-size: 15px; }
+
+/* ==========================================================================
+   Datos (catálogos)
+   ========================================================================== */
+.datos-tabs{ display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+.datos-tab{
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+  padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer; color: var(--ink-muted);
+}
+.datos-tab:hover{ border-color: var(--brass); }
+.datos-tab.active{ background: var(--ink); color: var(--panel-ink); border-color: var(--ink); }
+.datos-tab-count{ color: var(--brass); margin-left: 4px; font-family: var(--font-mono); }
+.datos-tab.active .datos-tab-count{ color: var(--brass); }
+
+.datos-panel{ background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 20px; box-shadow: var(--shadow-sm); }
+.datos-panel-toolbar{ display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.datos-search{
+  flex: 1; min-width: 220px; padding: 10px 13px; border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius-md); background: var(--paper);
+}
+.datos-add-row{ display: flex; gap: 8px; margin-bottom: 14px; }
+.datos-add-row input{
+  flex: 1; padding: 10px 13px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-md);
+}
+.datos-bulk{ margin-bottom: 16px; }
+.datos-bulk summary{ cursor: pointer; font-size: 13px; font-weight: 600; color: var(--ink-muted); margin-bottom: 8px; }
+.datos-bulk textarea{
+  width: 100%; min-height: 90px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-md);
+  padding: 10px 12px; resize: vertical; margin: 8px 0; font-family: var(--font-mono); font-size: 12.5px;
+}
+.datos-list{ display: flex; flex-direction: column; gap: 4px; max-height: 480px; overflow: auto; }
+.datos-list-item{
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--line); font-size: 13.5px;
+}
+.datos-list-item:hover{ border-color: var(--brass); background: var(--paper); }
+
+.cg-table td.cg-saldo-pendiente{ color: var(--rust); }
+.cg-table td.cg-saldo-ok{ color: var(--moss); }

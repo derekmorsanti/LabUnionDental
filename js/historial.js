@@ -2,10 +2,10 @@
 // historial.js — selección de persona + lista de agendas guardadas.
 // ============================================================================
 
-import { AGENDAS, getAgendaConfig, computeGrandTotal } from './agenda-configs.js?v10';
-import { getCurrentUser } from './auth.js?v10';
-import { listAgendaHistory } from './data-store.js?v10';
-import { escapeHtml, formatSavedTimestamp, round2, fetchWithRetry, describeFirestoreError } from './utils.js?v10';
+import { AGENDAS, getAgendaConfig, computeGrandTotal } from './agenda-configs.js?v12';
+import { getCurrentUser } from './auth.js?v12';
+import { listAgendaHistory } from './data-store.js?v12';
+import { escapeHtml, formatSavedTimestamp, round2, fetchWithRetry, describeFirestoreError } from './utils.js?v12';
 
 // Token de la carga más reciente: si el usuario navega a otro historial
 // antes de que una carga anterior termine, esa respuesta tardía se

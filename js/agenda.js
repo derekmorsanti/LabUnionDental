@@ -36,18 +36,33 @@
 import {
   getAgendaConfig, getAllPointColumns, computeRowTotal, computeGrandTotal,
   computeColumnSum, defaultRow, cellUnits, FALLBACK_POINT_VALUE
-} from './agenda-configs.js?v10';
-import { getCurrentUser } from './auth.js?v10';
+} from './agenda-configs.js?v12';
+import { getCurrentUser } from './auth.js?v12';
 import {
   getAgendaDay, autosaveAgendaDay, saveAgendaDay,
   getAgendaExtraColumns, saveAgendaExtraColumns
-} from './data-store.js?v10';
+} from './data-store.js?v12';
 import {
   dateKeyToday, formatAgendaHeaderDate, debounce, escapeHtml, toNumber, generateId, round2,
   fetchWithRetry, describeFirestoreError
-} from './utils.js?v10';
-import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v10';
-import { captureElementToImage } from './export.js?v10';
+} from './utils.js?v12';
+import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v12';
+import { captureElementToImage } from './export.js?v12';
+
+// ----------------------------------------------------------------------------
+// Botón "AGREGAR" por fila: crea una fila nueva en OTRA agenda (Yesos,
+// Metales, Tallado, Encerado o Pretallado), copiando SOLO doctor/paciente,
+// descripción y unidad. No requiere que la agenda destino esté abierta —
+// escribe directamente en su documento del día en Firestore, reutilizando
+// exactamente el mismo esquema que usa el resto de la app.
+// ----------------------------------------------------------------------------
+const AGREGAR_TARGETS = [
+  { label: 'Yesos', agendaId: 'cony' },
+  { label: 'Metales', agendaId: 'abner' },
+  { label: 'Tallado', agendaId: 'astryd' },
+  { label: 'Encerado', agendaId: 'dina' },
+  { label: 'Pretallado', agendaId: 'eliu' }
+];
 
 const DEFAULT_ROW_COUNT = 12;
 
@@ -333,7 +348,7 @@ function renderBody(key) {
       ? `<td class="cell-total">${round2(computeRowTotal(state.config, row, state.extraColumns)).toFixed(2)}</td>`
       : '';
 
-    return `<tr>${tds}${totalTd}<td class="row-actions-col"><button class="row-delete-btn" data-delrow="${row.id}" title="Eliminar fila">✕</button></td></tr>`;
+    return `<tr>${tds}${totalTd}<td class="row-actions-col"><button class="row-agregar-btn" data-agregar="${row.id}" title="Agregar a otra agenda">→</button><button class="row-delete-btn" data-delrow="${row.id}" title="Eliminar fila">✕</button></td></tr>`;
   }).join('');
 
   wireBodyEvents(key);
@@ -420,6 +435,10 @@ function wireBodyEvents(key) {
     td.addEventListener('dblclick', (e) => { e.preventDefault(); handlePointDblClick(key, td); });
   });
 
+  tbody.querySelectorAll('[data-agregar]').forEach(btn => {
+    btn.addEventListener('click', () => openAgregarModal(key, btn.dataset.agregar));
+  });
+
   tbody.querySelectorAll('[data-delrow]').forEach(btn => {
     btn.addEventListener('click', () => {
       const state = panels[key];
@@ -490,6 +509,78 @@ function handlePointDblClick(key, td) {
   box.querySelector('#cell-number-save').addEventListener('click', () => commit(input.value.trim()));
   box.querySelector('#cell-number-clear').addEventListener('click', () => commit(''));
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(input.value.trim()); });
+}
+
+// ----------------------------------------------------------------------------
+// Modal "AGREGAR": elegir a qué agenda enviar una copia de esta fila
+// ----------------------------------------------------------------------------
+function extractRowLeadValues(state, row) {
+  const doctor = row.cells['doctor'] || '';
+  const desc = row.cells['desc'] || '';
+  let unidad = '';
+  for (const key of ['unidad', 'unid', 'cant']) {
+    if (row.cells[key] !== undefined && row.cells[key] !== '') { unidad = row.cells[key]; break; }
+  }
+  return { doctor, desc, unidad };
+}
+
+function openAgregarModal(key, rowId) {
+  const state = panels[key];
+  if (!state) return;
+  const row = state.rows.find(r => r.id === rowId);
+  if (!row) return;
+  const values = extractRowLeadValues(state, row);
+
+  const box = openModal(`
+    <h3>Agregar a otra agenda</h3>
+    <p>Se creará una fila nueva con doctor/paciente, descripción y unidad. Los demás campos quedan vacíos para editar ahí.</p>
+    <div class="modal-actions" style="flex-wrap:wrap;justify-content:center;">
+      ${AGREGAR_TARGETS.map(t => `<button class="btn btn-outline" data-target="${t.agendaId}">${escapeHtml(t.label)}</button>`).join('')}
+    </div>
+  `);
+  box.querySelectorAll('[data-target]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      closeModal();
+      try {
+        await addRowToOtherAgenda(state.uid, btn.dataset.target, values);
+        const target = AGREGAR_TARGETS.find(t => t.agendaId === btn.dataset.target);
+        showToast(`Fila agregada a la agenda de ${target ? target.label : btn.dataset.target}`);
+      } catch (e) {
+        console.error('Error al agregar fila a otra agenda:', e);
+        showToast(describeFirestoreError(e), true);
+      }
+    });
+  });
+}
+
+/** Crea una fila nueva en la agenda destino (hoy), sin necesidad de tenerla abierta. */
+async function addRowToOtherAgenda(uid, targetAgendaId, values) {
+  const targetConfig = getAgendaConfig(targetAgendaId);
+  if (!targetConfig) return;
+
+  const baseDateKey = dateKeyToday();
+  // Cony está dividida en AM/PM: la fila nueva se agrega a la tanda AM por defecto.
+  const dateKey = targetConfig.splitAmPm ? `${baseDateKey}-AM` : baseDateKey;
+
+  const existing = await fetchWithRetry(() => getAgendaDay(uid, targetAgendaId, dateKey), { retries: 1, label: 'agregar fila' });
+  const rows = (existing && existing.rows) ? [...existing.rows] : [];
+  const extraColumns = (existing && existing.extraColumns) || [];
+  const meta = (existing && existing.meta) || {};
+
+  const newRow = defaultRow();
+  const leadIds = targetConfig.leadingColumns.map(c => c.id);
+  if (leadIds.includes('doctor')) newRow.cells['doctor'] = values.doctor;
+  if (leadIds.includes('desc')) newRow.cells['desc'] = values.desc;
+  // Unidad: usa la primera columna numérica de "cantidad" que tenga la agenda destino.
+  const unidadTargetId = ['unidad', 'unid', 'cant'].find(id => leadIds.includes(id));
+  if (unidadTargetId) newRow.cells[unidadTargetId] = values.unidad;
+
+  rows.push(newRow);
+
+  await fetchWithRetry(
+    () => autosaveAgendaDay(uid, targetAgendaId, dateKey, { rows, extraColumns, meta }),
+    { retries: 1, label: 'agregar fila' }
+  );
 }
 
 // ----------------------------------------------------------------------------

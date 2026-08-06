@@ -3,16 +3,18 @@
 // de sesión y conecta todos los módulos entre sí.
 // ============================================================================
 
-import { isFirebaseConfigured } from './firebase-config.js?v10';
+import { isFirebaseConfigured, forceReconnectFirestore } from './firebase-config.js?v12';
 import {
   onAuthChange, getUserProfileName, logoutUser,
   registerUser, loginUser, friendlyAuthError
-} from './auth.js?v10';
-import { renderDashboard } from './dashboard.js?v10';
-import { renderAgenda } from './agenda.js?v10';
-import { renderHistorialSelect, renderHistorialList } from './historial.js?v10';
-import { renderCalendarioSelect, renderCalendarioMonth } from './calendario.js?v10';
-import { closeModal, showToast } from './ui-helpers.js?v10';
+} from './auth.js?v12';
+import { renderDashboard } from './dashboard.js?v12';
+import { renderAgenda } from './agenda.js?v12';
+import { renderHistorialSelect, renderHistorialList } from './historial.js?v12';
+import { renderCalendarioSelect, renderCalendarioMonth } from './calendario.js?v12';
+import { renderControlGeneral } from './control-general.js?v12';
+import { renderDatos } from './datos.js?v12';
+import { closeModal, showToast } from './ui-helpers.js?v12';
 
 // Red de seguridad global: cualquier error de JavaScript no controlado en
 // ningún punto de la app (o cualquier promesa rechazada sin su propio
@@ -28,6 +30,8 @@ window.addEventListener('unhandledrejection', (event) => {
 });
 
 let currentView = 'dashboard';
+let lastNavParam = null;
+let lastNavExtra = null;
 let currentUserName = '';
 
 // ----------------------------------------------------------------------------
@@ -53,6 +57,8 @@ function closeSidebarMobile() {
 
 async function navigate(view, param, extra) {
   currentView = view;
+  lastNavParam = param;
+  lastNavExtra = extra;
   closeSidebarMobile();
   const crumb = document.getElementById('topbar-crumb');
 
@@ -80,6 +86,14 @@ async function navigate(view, param, extra) {
     case 'calendario-month':
       showSubview('view-calendario-month'); crumb.textContent = 'Calendario'; setActiveSidebar('calendario-select');
       await renderCalendarioMonth(param, navigate);
+      break;
+    case 'control-general':
+      showSubview('view-control-general'); crumb.textContent = 'Control General'; setActiveSidebar('control-general');
+      await renderControlGeneral(navigate);
+      break;
+    case 'datos':
+      showSubview('view-datos'); crumb.textContent = 'Datos'; setActiveSidebar('datos');
+      await renderDatos(navigate);
       break;
   }
 }
@@ -191,6 +205,34 @@ function wireAppShell() {
 }
 
 // ----------------------------------------------------------------------------
+// Reconexión automática: cuando el navegador recupera la conexión (evento
+// "online"), el SDK de Firestore a veces se queda "convencido" de que sigue
+// sin red (falso negativo, común con extensiones de privacidad) y las
+// pantallas se quedan repitiendo "Failed to get document because the client
+// is offline" indefinidamente. Forzamos la reconexión y volvemos a pedir los
+// datos de la vista actual automáticamente.
+// ----------------------------------------------------------------------------
+let reconnecting = false;
+function wireConnectivity() {
+  window.addEventListener('online', async () => {
+    if (reconnecting) return;
+    reconnecting = true;
+    try {
+      await forceReconnectFirestore();
+      showToast('Conexión recuperada — recargando datos…');
+      await navigate(currentView, lastNavParam, lastNavExtra);
+    } catch (e) {
+      console.error('Error al reconectar Firestore:', e);
+    } finally {
+      reconnecting = false;
+    }
+  });
+  window.addEventListener('offline', () => {
+    showToast('Sin conexión a internet. Los cambios se guardarán al recuperar la señal.', true);
+  });
+}
+
+// ----------------------------------------------------------------------------
 // Arranque
 // ----------------------------------------------------------------------------
 let authWired = false;
@@ -198,6 +240,7 @@ let authWired = false;
 function init() {
   wireAuthUI();
   wireAppShell();
+  wireConnectivity();
 
   if (!isFirebaseConfigured) {
     document.querySelector('#view-loading p').textContent =
@@ -231,7 +274,7 @@ function init() {
 
       // El nombre "real" guardado en Firestore se actualiza después, en segundo plano,
       // sin bloquear nada de lo anterior.
-      getUserProfileName(user).then(name => {
+      getUserProfileName(user.uid).then(name => {
         if (name && name !== currentUserName) {
           currentUserName = name;
           document.getElementById('sidebar-username').textContent = name;

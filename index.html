@@ -133,6 +133,14 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>
         Calendario
       </button>
+      <button class="sidebar-link" data-nav="control-general">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/><path d="M9 15v-6h11"/><path d="M14 5l6 0 0 6"/><line x1="20" y1="5" x2="13" y2="12"/></svg>
+        Control General
+      </button>
+      <button class="sidebar-link" data-nav="datos">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg>
+        Datos
+      </button>
     </nav>
     <div class="sidebar-logout">
       <button class="sidebar-link" id="btn-logout">
@@ -219,6 +227,16 @@
         <span class="save-status" id="calendar-save-status" style="display:block;margin-top:12px;"></span>
       </section>
 
+      <!-- ---------- CONTROL GENERAL ---------- -->
+      <section id="view-control-general" class="subview">
+        <div id="cg-container"></div>
+      </section>
+
+      <!-- ---------- DATOS ---------- -->
+      <section id="view-datos" class="subview">
+        <div id="datos-container"></div>
+      </section>
+
     </main>
   </div>
 </div>
@@ -243,7 +261,7 @@
 <!-- ==========================================================================
      Módulos de la aplicación (ES6)
      ========================================================================== -->
-<script type="module" src="js/main.js?v10"></script>
+<script type="module" src="js/main.js?v12"></script>
 
 </body>
 </html>

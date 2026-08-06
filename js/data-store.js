@@ -27,9 +27,9 @@
 // ============================================================================
 
 import {
-  doc, getDoc, setDoc, collection, query, where, getDocs, serverTimestamp
+  doc, getDoc, setDoc, deleteDoc, collection, query, where, getDocs, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
-import { db } from './firebase-config.js?v10';
+import { db } from './firebase-config.js?v12';
 
 function agendaConfigRef(uid, agendaId) {
   return doc(db, 'users', uid, 'agendaConfigs', agendaId);
@@ -39,6 +39,15 @@ function agendaDayRef(uid, agendaId, dateKey) {
 }
 function calendarMonthRef(uid, monthKey) {
   return doc(db, 'users', uid, 'calendarMonths', monthKey);
+}
+function controlGeneralCollectionRef(uid) {
+  return collection(db, 'users', uid, 'controlGeneral');
+}
+function controlGeneralRecordRef(uid, id) {
+  return doc(db, 'users', uid, 'controlGeneral', id);
+}
+function datosCatalogsRef(uid) {
+  return doc(db, 'users', uid, 'datosCatalog', 'all');
 }
 
 /** Columnas agregadas dinámicamente (persisten para todos los días futuros de esa agenda). */
@@ -100,4 +109,51 @@ export async function getCalendarMonth(uid, monthKey) {
 
 export async function saveCalendarMonth(uid, monthKey, notes) {
   await setDoc(calendarMonthRef(uid, monthKey), { notes, updatedAt: serverTimestamp() }, { merge: true });
+}
+
+// ----------------------------------------------------------------------------
+// CONTROL GENERAL — módulo de gestión de registros/casos (orden, doctor,
+// paciente, costos, abonos, fechas, status, etc.). Un documento por
+// registro, para poder filtrar/editar cada uno de forma independiente.
+// ----------------------------------------------------------------------------
+
+/** Todos los registros de Control General del usuario. */
+export async function listControlGeneral(uid) {
+  const snap = await getDocs(controlGeneralCollectionRef(uid));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+/** Crea o actualiza (merge) un registro de Control General. */
+export async function saveControlGeneralRecord(uid, id, data) {
+  await setDoc(controlGeneralRecordRef(uid, id), {
+    ...data, updatedAt: serverTimestamp()
+  }, { merge: true });
+}
+
+/** Elimina un registro de Control General. */
+export async function deleteControlGeneralRecord(uid, id) {
+  await deleteDoc(controlGeneralRecordRef(uid, id));
+}
+
+// ----------------------------------------------------------------------------
+// DATOS — catálogos reutilizables (doctores, etapas, costos, destinos,
+// status, corrección/repetición) que alimentan las listas desplegables de
+// Control General y de las Agendas. Cada catálogo es un solo documento con
+// un arreglo `items`.
+// ----------------------------------------------------------------------------
+
+/** Todos los catálogos del usuario en un solo documento (1 lectura en vez de 6) — { doctores, etapas, costos, destinos, status, correccion }. null si el usuario todavía no tiene nada guardado. */
+export async function getAllDatosCatalogs(uid) {
+  const snap = await getDoc(datosCatalogsRef(uid));
+  return snap.exists() ? snap.data() : null;
+}
+
+/** Guarda de una sola vez varios catálogos (merge por campo) — usado para sembrar los que falten en un solo viaje de red. */
+export async function saveDatosCatalogs(uid, catalogsObj) {
+  await setDoc(datosCatalogsRef(uid), { ...catalogsObj, updatedAt: serverTimestamp() }, { merge: true });
+}
+
+/** Reemplaza la lista de un solo catálogo (merge — no afecta a los demás campos del documento). */
+export async function saveDatosCatalog(uid, name, items) {
+  await setDoc(datosCatalogsRef(uid), { [name]: items, updatedAt: serverTimestamp() }, { merge: true });
 }
