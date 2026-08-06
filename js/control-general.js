@@ -171,7 +171,8 @@ function filteredRecords() {
   return list.filter(r =>
     String(r.noOrden || '').toLowerCase().includes(q) ||
     String(r.paciente || '').toLowerCase().includes(q) ||
-    String(r.doctor || '').toLowerCase().includes(q)
+    String(r.doctor || '').toLowerCase().includes(q) ||
+    String(r.destino || '').toLowerCase().includes(q)
   );
 }
 
@@ -201,7 +202,7 @@ function paintMonthTable() {
         <div class="agenda-subtitle">Registro de casos del mes — costos, abonos y estado.</div>
       </div>
       <div class="agenda-toolbar">
-        <input type="text" id="cg-search" class="datos-search" style="min-width:260px;" placeholder="Buscar por No. orden, paciente o doctor…" value="${escapeHtml(searchText)}">
+        <input type="text" id="cg-search" class="datos-search" style="min-width:260px;" placeholder="Buscar por No. orden, paciente, doctor o destino…" value="${escapeHtml(searchText)}">
         <button class="btn btn-brass btn-sm" id="cg-save">Guardar</button>
       </div>
     </div>

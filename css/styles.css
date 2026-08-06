@@ -566,8 +566,6 @@ table.agenda-table{ border-collapse: collapse; width: 100%; min-width: 640px; }
   font-size: 12.5px; font-family: inherit;
 }
 .cg-table td input:focus, .cg-table td select:focus{ background: var(--brass-wash); outline: none; }
-.cg-table tr.cg-row-cancelado{ opacity: 0.55; text-decoration: line-through; }
-.cg-table tr.cg-row-cancelado input, .cg-table tr.cg-row-cancelado select{ text-decoration: line-through; }
 .cg-abono-cell{ display: flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 4px; }
 .cg-abono-cell .btn-icon{ width: 24px; height: 24px; font-size: 15px; }
 

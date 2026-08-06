@@ -111,10 +111,6 @@ function paintBody(uid) {
   const bodyEl = document.getElementById('datos-body');
   if (!bodyEl) return;
   const cat = catalogDef(activeTab);
-  const items = state[cat.id] || [];
-  const filtered = filterText
-    ? items.filter(it => itemLabel(cat, it).toLowerCase().includes(filterText.toLowerCase()))
-    : items;
 
   bodyEl.innerHTML = `
     <div class="datos-panel">
@@ -134,20 +130,15 @@ function paintBody(uid) {
         <button class="btn btn-outline btn-sm" id="datos-bulk-add">Agregar todos</button>
       </details>
 
-      <div class="datos-list" id="datos-list">
-        ${filtered.length ? filtered.map(it => `
-          <div class="datos-list-item" data-realidx="${items.indexOf(it)}">
-            <span>${escapeHtml(itemLabel(cat, it))}</span>
-            <button class="row-delete-btn" data-del="${items.indexOf(it)}" title="Eliminar">✕</button>
-          </div>
-        `).join('') : `<div class="empty-state">Sin resultados.</div>`}
-      </div>
+      <div class="datos-list" id="datos-list"></div>
     </div>
   `;
 
+  paintList(uid);
+
   document.getElementById('datos-search').addEventListener('input', (e) => {
     filterText = e.target.value;
-    paintBody(uid);
+    paintList(uid);
   });
 
   document.getElementById('datos-new-add').addEventListener('click', () => addItem(uid));
@@ -156,8 +147,26 @@ function paintBody(uid) {
   });
 
   document.getElementById('datos-bulk-add').addEventListener('click', () => addBulk(uid));
+}
 
-  bodyEl.querySelectorAll('[data-del]').forEach(btn => {
+/** Repinta únicamente la lista de resultados (no el buscador ni el resto del panel), para que escribir en el buscador nunca le haga perder el foco al input. */
+function paintList(uid) {
+  const listEl = document.getElementById('datos-list');
+  if (!listEl) return;
+  const cat = catalogDef(activeTab);
+  const items = state[cat.id] || [];
+  const filtered = filterText
+    ? items.filter(it => itemLabel(cat, it).toLowerCase().includes(filterText.toLowerCase()))
+    : items;
+
+  listEl.innerHTML = filtered.length ? filtered.map(it => `
+    <div class="datos-list-item" data-realidx="${items.indexOf(it)}">
+      <span>${escapeHtml(itemLabel(cat, it))}</span>
+      <button class="row-delete-btn" data-del="${items.indexOf(it)}" title="Eliminar">✕</button>
+    </div>
+  `).join('') : `<div class="empty-state">Sin resultados.</div>`;
+
+  listEl.querySelectorAll('[data-del]').forEach(btn => {
     btn.addEventListener('click', () => removeItem(uid, parseInt(btn.dataset.del, 10)));
   });
 }
