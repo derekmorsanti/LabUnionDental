@@ -6,20 +6,20 @@
 // alimentar sus listas desplegables.
 // ============================================================================
 
-import { getCurrentUser } from './auth.js?v15';
+import { getCurrentUser } from './auth.js?v16';
 import {
   listControlGeneral, saveControlGeneralRecord, deleteControlGeneralRecord,
   getAgendaDay, autosaveAgendaDay
-} from './data-store.js?v15';
-import { getAgendaConfig, defaultRow } from './agenda-configs.js?v15';
-import { ensureCatalogsLoaded, getCatalogItems } from './datos.js?v15';
-import { UNIDADES_1_32 } from './datos-seed.js?v15';
+} from './data-store.js?v16';
+import { getAgendaConfig, defaultRow } from './agenda-configs.js?v16';
+import { ensureCatalogsLoaded, getCatalogItems } from './datos.js?v16';
+import { UNIDADES_1_32 } from './datos-seed.js?v16';
 import {
   escapeHtml, debounce, toNumber, round2, generateId, dateKeyToday,
   getAvailableMonths, MESES_ES, capitalize, getGuatemalaParts,
   fetchWithRetry, describeFirestoreError
-} from './utils.js?v15';
-import { openModal, closeModal, showToast } from './ui-helpers.js?v15';
+} from './utils.js?v16';
+import { openModal, closeModal, showToast } from './ui-helpers.js?v16';
 
 let records = [];        // TODOS los registros del usuario (una sola carga por sesión)
 let uid = null;
@@ -28,6 +28,8 @@ let loadingPromise = null;
 let searchText = '';
 let currentMonthKey = null; // null = pantalla de selección de mes
 const autosaveFns = {};
+let resumenVisible = false;
+let selectedDoctor = null;
 
 // Fila → agenda destino: doctor/px, descripción y cantidad se copian tal cual.
 const AGREGAR_TARGETS = [
@@ -203,6 +205,7 @@ function paintMonthTable() {
       </div>
       <div class="agenda-toolbar">
         <input type="text" id="cg-search" class="datos-search" style="min-width:260px;" placeholder="Buscar por No. orden, paciente, doctor o destino…" value="${escapeHtml(searchText)}">
+        <button class="btn btn-outline btn-sm" id="cg-resumen-btn">${resumenVisible ? 'Ocultar resumen' : 'Resumen por Doctor'}</button>
         <button class="btn btn-brass btn-sm" id="cg-save">Guardar</button>
       </div>
     </div>
@@ -224,6 +227,7 @@ function paintMonthTable() {
       <button class="btn btn-ghost btn-sm add-row-btn" id="cg-add-row">+ Agregar fila</button>
       <span class="save-status" id="cg-save-status"></span>
     </div>
+    <div id="cg-resumen-container"></div>
     ${datalistHtml('cg-dl-doctor', doctores)}
     ${datalistHtml('cg-dl-etapa', etapas)}
     ${datalistHtml('cg-dl-destino', destinos)}
@@ -241,8 +245,10 @@ function paintMonthTable() {
   });
   document.getElementById('cg-add-row').addEventListener('click', addNewRow);
   document.getElementById('cg-save').addEventListener('click', saveAllMonth);
+  document.getElementById('cg-resumen-btn').addEventListener('click', toggleResumenDoctores);
 
   paintRows();
+  if (resumenVisible) renderResumenDoctores();
 }
 
 function paintRows() {
@@ -393,6 +399,7 @@ function addNewRow() {
   records.push(rec);
   saveRecordNow(rec);
   paintRows();
+  refreshResumenIfVisible();
   showToast('Fila agregada');
 }
 
@@ -400,6 +407,7 @@ function deleteRecord(id) {
   if (!confirm('¿Eliminar este registro? Esta acción no se puede deshacer.')) return;
   records = records.filter(r => r.id !== id);
   paintRows();
+  refreshResumenIfVisible();
   fetchWithRetry(() => deleteControlGeneralRecord(uid, id), { retries: 1, label: 'eliminar registro' })
     .then(() => showToast('Registro eliminado'))
     .catch(e => { console.error('Error al eliminar registro:', e); showToast(describeFirestoreError(e), true); });
@@ -414,6 +422,7 @@ function scheduleAutosave(rec) {
   if (!autosaveFns[rec.id]) {
     autosaveFns[rec.id] = debounce(() => {
       fetchWithRetry(() => saveControlGeneralRecord(uid, rec.id, { ...rec }), { retries: 1, label: 'guardar registro' })
+        .then(() => refreshResumenIfVisible())
         .catch(e => { console.error('Error al guardar registro:', e); showToast(describeFirestoreError(e), true); });
     }, 900);
   }
@@ -477,4 +486,155 @@ async function addRowToAgenda(targetAgendaId, rec, position) {
     () => autosaveAgendaDay(uid, targetAgendaId, dateKey, { rows, extraColumns, meta }),
     { retries: 1, label: 'agregar fila' }
   );
+}
+
+// ----------------------------------------------------------------------------
+// RESUMEN POR DOCTOR + ESTADO DE CUENTA
+// Reutiliza `records` (ya cargados en memoria por loadRecordsOnce) y las
+// funciones de cálculo existentes (computeTotal/computeAbonoAcumulado/
+// computeSaldo). No vuelve a pedir nada a Firestore.
+// ----------------------------------------------------------------------------
+function toggleResumenDoctores() {
+  resumenVisible = !resumenVisible;
+  const btn = document.getElementById('cg-resumen-btn');
+  if (btn) btn.textContent = resumenVisible ? 'Ocultar resumen' : 'Resumen por Doctor';
+  const container = document.getElementById('cg-resumen-container');
+  if (!container) return;
+  if (!resumenVisible) {
+    container.innerHTML = '';
+    selectedDoctor = null;
+    return;
+  }
+  renderResumenDoctores();
+}
+
+function computeDoctorSummary() {
+  const map = new Map();
+  for (const rec of records) {
+    const doctor = (rec.doctor || '').trim();
+    if (!doctor) continue;
+    const total = computeTotal(rec);
+    const abonado = computeAbonoAcumulado(rec);
+    const saldo = round2(total - abonado);
+    const entry = map.get(doctor) || { doctor, totalGenerado: 0, totalAbonado: 0, saldoPendiente: 0 };
+    entry.totalGenerado = round2(entry.totalGenerado + total);
+    entry.totalAbonado = round2(entry.totalAbonado + abonado);
+    entry.saldoPendiente = round2(entry.saldoPendiente + saldo);
+    map.set(doctor, entry);
+  }
+  return Array.from(map.values()).sort((a, b) => b.saldoPendiente - a.saldoPendiente);
+}
+
+function renderResumenDoctores() {
+  const container = document.getElementById('cg-resumen-container');
+  if (!container) return;
+  const summary = computeDoctorSummary();
+
+  container.innerHTML = `
+    <div class="agenda-header-bar" style="margin-top:26px;">
+      <div class="agenda-title-block">
+        <h2>Resumen por Doctor</h2>
+        <div class="agenda-subtitle">Totales acumulados de todos los registros cargados. Clic en un doctor para ver su estado de cuenta.</div>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table class="agenda-table" id="cg-resumen-table">
+        <thead>
+          <tr><th class="col-doctor">Doctor</th><th>Total</th><th>Abonado</th><th>Saldo</th></tr>
+        </thead>
+        <tbody>
+          ${summary.length ? summary.map(s => `
+            <tr data-doctor="${escapeHtml(s.doctor)}" class="cg-doctor-row${selectedDoctor === s.doctor ? ' row-selected' : ''}">
+              <td class="col-doctor">${escapeHtml(s.doctor)}</td>
+              <td class="mono">Q${s.totalGenerado.toFixed(2)}</td>
+              <td class="mono">Q${s.totalAbonado.toFixed(2)}</td>
+              <td class="mono ${s.saldoPendiente > 0 ? 'cg-saldo-pendiente' : 'cg-saldo-ok'}">Q${s.saldoPendiente.toFixed(2)}</td>
+            </tr>
+          `).join('') : `<tr><td colspan="4"><div class="empty-state">No hay registros con doctor asignado.</div></td></tr>`}
+        </tbody>
+      </table>
+    </div>
+    <div id="cg-estado-cuenta-inline"></div>
+  `;
+
+  container.querySelectorAll('.cg-doctor-row').forEach(tr => {
+    tr.addEventListener('click', () => handleDoctorClick(tr.dataset.doctor));
+  });
+
+  if (selectedDoctor && summary.some(s => s.doctor === selectedDoctor)) {
+    renderEstadoCuenta(selectedDoctor);
+  } else if (selectedDoctor) {
+    selectedDoctor = null;
+  }
+}
+
+function handleDoctorClick(doctor) {
+  selectedDoctor = doctor;
+  const container = document.getElementById('cg-resumen-container');
+  if (container) {
+    container.querySelectorAll('.cg-doctor-row').forEach(tr => {
+      tr.classList.toggle('row-selected', tr.dataset.doctor === doctor);
+    });
+  }
+  renderEstadoCuenta(doctor);
+}
+
+function renderEstadoCuenta(doctor) {
+  const inline = document.getElementById('cg-estado-cuenta-inline');
+  if (!inline) return;
+
+  const list = records.filter(r => (r.doctor || '').trim() === doctor);
+  const pendientes = list.filter(r => (r.status || '').toUpperCase() !== 'CANCELADO');
+  const cancelados = list.filter(r => (r.status || '').toUpperCase() === 'CANCELADO');
+
+  let totalGeneral = 0, totalAbonado = 0, saldoPendiente = 0;
+  for (const r of list) {
+    totalGeneral = round2(totalGeneral + computeTotal(r));
+    totalAbonado = round2(totalAbonado + computeAbonoAcumulado(r));
+    saldoPendiente = round2(saldoPendiente + computeSaldo(r));
+  }
+
+  const rowsHtml = (arr) => arr.length ? arr.map(r => `
+    <tr>
+      <td>${escapeHtml(r.fechaIngreso || '—')}</td>
+      <td class="col-desc">${escapeHtml(r.paciente || '—')}</td>
+      <td class="col-desc">${escapeHtml(r.descripcion || '—')}</td>
+      <td class="mono">Q${computeTotal(r).toFixed(2)}</td>
+      <td class="mono">Q${computeAbonoAcumulado(r).toFixed(2)}</td>
+      <td class="mono ${computeSaldo(r) > 0 ? 'cg-saldo-pendiente' : 'cg-saldo-ok'}">Q${computeSaldo(r).toFixed(2)}</td>
+    </tr>
+  `).join('') : `<tr><td colspan="6"><div class="empty-state">Sin registros.</div></td></tr>`;
+
+  inline.innerHTML = `
+    <div class="agenda-header-bar" style="margin-top:22px;">
+      <div class="agenda-title-block">
+        <h2>Estado de Cuenta — ${escapeHtml(doctor)}</h2>
+        <div class="agenda-subtitle">${list.length} registro(s) encontrados.</div>
+      </div>
+    </div>
+    <h3 style="margin:14px 0 8px;">Pendientes</h3>
+    <div class="table-scroll">
+      <table class="agenda-table">
+        <thead><tr><th>Fecha</th><th class="col-desc">Paciente</th><th class="col-desc">Descripción</th><th>Total</th><th>Abono</th><th>Saldo</th></tr></thead>
+        <tbody>${rowsHtml(pendientes)}</tbody>
+      </table>
+    </div>
+    <h3 style="margin:18px 0 8px;">Cancelados</h3>
+    <div class="table-scroll">
+      <table class="agenda-table">
+        <thead><tr><th>Fecha</th><th class="col-desc">Paciente</th><th class="col-desc">Descripción</th><th>Total</th><th>Abono</th><th>Saldo</th></tr></thead>
+        <tbody>${rowsHtml(cancelados)}</tbody>
+      </table>
+    </div>
+    <div class="agenda-footer-bar" style="margin-top:14px;gap:20px;">
+      <span class="mono">Total General: Q${totalGeneral.toFixed(2)}</span>
+      <span class="mono">Total Abonado: Q${totalAbonado.toFixed(2)}</span>
+      <span class="mono ${saldoPendiente > 0 ? 'cg-saldo-pendiente' : 'cg-saldo-ok'}">Saldo Pendiente: Q${saldoPendiente.toFixed(2)}</span>
+    </div>
+  `;
+}
+
+function refreshResumenIfVisible() {
+  if (!resumenVisible) return;
+  renderResumenDoctores();
 }

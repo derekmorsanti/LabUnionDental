@@ -36,18 +36,18 @@
 import {
   getAgendaConfig, getAllPointColumns, computeRowTotal, computeGrandTotal,
   computeColumnSum, defaultRow, cellUnits, FALLBACK_POINT_VALUE
-} from './agenda-configs.js?v15';
-import { getCurrentUser } from './auth.js?v15';
+} from './agenda-configs.js?v16';
+import { getCurrentUser } from './auth.js?v16';
 import {
   getAgendaDay, autosaveAgendaDay, saveAgendaDay,
   getAgendaExtraColumns, saveAgendaExtraColumns
-} from './data-store.js?v15';
+} from './data-store.js?v16';
 import {
   dateKeyToday, formatAgendaHeaderDate, debounce, escapeHtml, toNumber, generateId, round2,
   fetchWithRetry, describeFirestoreError
-} from './utils.js?v15';
-import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v15';
-import { captureElementToImage } from './export.js?v15';
+} from './utils.js?v16';
+import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v16';
+import { captureElementToImage } from './export.js?v16';
 
 // ----------------------------------------------------------------------------
 // Botón "AGREGAR" por fila: crea una fila nueva en OTRA agenda (Yesos,
@@ -162,7 +162,7 @@ function panelHtml(config, inst) {
       </div>
 
       <div class="cell-color-picker" id="${eid('cell-color-picker', key)}">
-        <span class="ccp-label">Color de fila: (clic en una fila, luego en un color)</span>
+        <span class="ccp-label">Color de fila: </span>
         ${CELL_COLORS.map(c => `<button type="button" class="ccp-swatch" data-color="${c.key}" style="background:${c.hex};" title="${escapeHtml(c.label)}"></button>`).join('')}
       </div>
 

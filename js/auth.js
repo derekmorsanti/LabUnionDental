@@ -19,8 +19,8 @@ import {
 import {
   doc, setDoc, getDoc, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
-import { auth, db } from './firebase-config.js?v15';
-import { withTimeout } from './utils.js?v15';
+import { auth, db } from './firebase-config.js?v16';
+import { withTimeout } from './utils.js?v16';
 
 /** Traduce los códigos de error de Firebase a mensajes en español. */
 export function friendlyAuthError(error) {
