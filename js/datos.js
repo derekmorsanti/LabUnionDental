@@ -4,11 +4,11 @@
 // Control General y de las Agendas.
 // ============================================================================
 
-import { getCurrentUser } from './auth.js?v16';
-import { getAllDatosCatalogs, saveDatosCatalogs, saveDatosCatalog } from './data-store.js?v16';
-import { DATOS_CATALOGS } from './datos-seed.js?v16';
-import { escapeHtml, debounce, fetchWithRetry, describeFirestoreError } from './utils.js?v16';
-import { showToast } from './ui-helpers.js?v16';
+import { getCurrentUser } from './auth.js?v18';
+import { getAllDatosCatalogs, saveDatosCatalogs, saveDatosCatalog } from './data-store.js?v18';
+import { DATOS_CATALOGS } from './datos-seed.js?v18';
+import { escapeHtml, debounce, fetchWithRetry, describeFirestoreError } from './utils.js?v18';
+import { showToast } from './ui-helpers.js?v18';
 
 let state = {}; // { [catalogId]: items[] }
 let activeTab = DATOS_CATALOGS[0].id;

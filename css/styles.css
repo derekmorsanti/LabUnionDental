@@ -646,3 +646,28 @@ table.agenda-table{ border-collapse: collapse; width: 100%; min-width: 640px; }
 
 .cg-table td.cg-saldo-pendiente{ color: var(--rust); }
 .cg-table td.cg-saldo-ok{ color: var(--moss); }
+.cg-saldo-pendiente{ color: var(--rust); }
+.cg-saldo-ok{ color: var(--moss); }
+
+.cg-total-row td{
+  background: var(--ink); color: var(--paper);
+  font-weight: 700; font-family: var(--font-mono);
+  border-top: 2px solid var(--brass);
+}
+.cg-total-row td:first-child{ text-align: left; letter-spacing: 0.04em; }
+.cg-total-row td.cg-saldo-pendiente{ color: #ffb4a8; }
+.cg-total-row td.cg-saldo-ok{ color: #b7f5c9; }
+
+.cg-estado-letterhead{
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; margin: 22px 0 6px;
+}
+.cg-estado-doc-label, .cg-estado-fecha-label{
+  font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+  font-size: 13.5px; color: var(--ink); white-space: nowrap;
+}
+.cg-estado-logo{ height: 64px; width: auto; margin: 0 auto; display: block; }
+@media (max-width: 640px){
+  .cg-estado-letterhead{ flex-direction: column; text-align: center; }
+  .cg-estado-logo{ order: -1; }
+}

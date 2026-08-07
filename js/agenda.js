@@ -36,18 +36,18 @@
 import {
   getAgendaConfig, getAllPointColumns, computeRowTotal, computeGrandTotal,
   computeColumnSum, defaultRow, cellUnits, FALLBACK_POINT_VALUE
-} from './agenda-configs.js?v16';
-import { getCurrentUser } from './auth.js?v16';
+} from './agenda-configs.js?v18';
+import { getCurrentUser } from './auth.js?v18';
 import {
   getAgendaDay, autosaveAgendaDay, saveAgendaDay,
   getAgendaExtraColumns, saveAgendaExtraColumns
-} from './data-store.js?v16';
+} from './data-store.js?v18';
 import {
   dateKeyToday, formatAgendaHeaderDate, debounce, escapeHtml, toNumber, generateId, round2,
   fetchWithRetry, describeFirestoreError
-} from './utils.js?v16';
-import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v16';
-import { captureElementToImage } from './export.js?v16';
+} from './utils.js?v18';
+import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v18';
+import { captureElementToImage } from './export.js?v18';
 
 // ----------------------------------------------------------------------------
 // Botón "AGREGAR" por fila: crea una fila nueva en OTRA agenda (Yesos,

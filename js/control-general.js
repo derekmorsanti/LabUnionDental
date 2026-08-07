@@ -6,20 +6,20 @@
 // alimentar sus listas desplegables.
 // ============================================================================
 
-import { getCurrentUser } from './auth.js?v16';
+import { getCurrentUser } from './auth.js?v18';
 import {
   listControlGeneral, saveControlGeneralRecord, deleteControlGeneralRecord,
   getAgendaDay, autosaveAgendaDay
-} from './data-store.js?v16';
-import { getAgendaConfig, defaultRow } from './agenda-configs.js?v16';
-import { ensureCatalogsLoaded, getCatalogItems } from './datos.js?v16';
-import { UNIDADES_1_32 } from './datos-seed.js?v16';
+} from './data-store.js?v18';
+import { getAgendaConfig, defaultRow } from './agenda-configs.js?v18';
+import { ensureCatalogsLoaded, getCatalogItems } from './datos.js?v18';
+import { UNIDADES_1_32 } from './datos-seed.js?v18';
 import {
   escapeHtml, debounce, toNumber, round2, generateId, dateKeyToday,
   getAvailableMonths, MESES_ES, capitalize, getGuatemalaParts,
   fetchWithRetry, describeFirestoreError
-} from './utils.js?v16';
-import { openModal, closeModal, showToast } from './ui-helpers.js?v16';
+} from './utils.js?v18';
+import { openModal, closeModal, showToast } from './ui-helpers.js?v18';
 
 let records = [];        // TODOS los registros del usuario (una sola carga por sesión)
 let uid = null;
@@ -217,7 +217,7 @@ function paintMonthTable() {
             <th class="col-desc">Paciente</th><th class="col-desc">Descripción</th><th>Unidades</th>
             <th>Costo C/U</th><th>Color</th><th class="col-desc">Etapa</th><th class="col-desc">Corr/Rep</th>
             <th class="col-desc">Destino</th><th>F. Requerida</th><th>F. Salida</th><th>Tiempo</th>
-            <th>Total</th><th>Abono Acum.</th><th>Fecha 1</th><th>Abono</th><th>Fecha 2</th><th>Abono</th><th>Fecha 3</th><th>Abono</th><th>Saldo</th><th>Status</th><th class="col-desc">Observaciones</th><th></th>
+            <th>Total</th><th>Abono Acum.</th><th>Fecha 1</th><th>Abono</th><th>Fecha 2</th><th>Abono</th><th>Fecha 3</th><th>Abono</th><th>PEND. DE PAGAR</th><th>Status</th><th class="col-desc">Observaciones</th><th></th>
           </tr>
         </thead>
         <tbody id="cg-tbody"></tbody>
@@ -540,7 +540,7 @@ function renderResumenDoctores() {
     <div class="table-scroll">
       <table class="agenda-table" id="cg-resumen-table">
         <thead>
-          <tr><th class="col-doctor">Doctor</th><th>Total</th><th>Abonado</th><th>Saldo</th></tr>
+          <tr><th class="col-doctor">Doctor</th><th>Total</th><th>Abonado</th><th>PEND. DE PAGAR</th></tr>
         </thead>
         <tbody>
           ${summary.length ? summary.map(s => `
@@ -579,6 +579,14 @@ function handleDoctorClick(doctor) {
   renderEstadoCuenta(doctor);
 }
 
+function formatIsoDateDMY(iso) {
+  if (!iso) return '';
+  const parts = String(iso).split('-');
+  if (parts.length !== 3) return iso;
+  const [y, m, d] = parts;
+  return `${d}/${m}/${y}`;
+}
+
 function renderEstadoCuenta(doctor) {
   const inline = document.getElementById('cg-estado-cuenta-inline');
   if (!inline) return;
@@ -594,42 +602,60 @@ function renderEstadoCuenta(doctor) {
     saldoPendiente = round2(saldoPendiente + computeSaldo(r));
   }
 
-  const rowsHtml = (arr) => arr.length ? arr.map(r => `
+  const sectionTotals = (arr) => arr.reduce((acc, r) => {
+    acc.total = round2(acc.total + computeTotal(r));
+    acc.abono = round2(acc.abono + computeAbonoAcumulado(r));
+    acc.saldo = round2(acc.saldo + computeSaldo(r));
+    return acc;
+  }, { total: 0, abono: 0, saldo: 0 });
+
+  const rowsHtml = (arr) => arr.map(r => `
     <tr>
-      <td>${escapeHtml(r.fechaIngreso || '—')}</td>
+      <td>${escapeHtml(formatIsoDateDMY(r.fechaIngreso) || '—')}</td>
       <td class="col-desc">${escapeHtml(r.paciente || '—')}</td>
       <td class="col-desc">${escapeHtml(r.descripcion || '—')}</td>
       <td class="mono">Q${computeTotal(r).toFixed(2)}</td>
       <td class="mono">Q${computeAbonoAcumulado(r).toFixed(2)}</td>
       <td class="mono ${computeSaldo(r) > 0 ? 'cg-saldo-pendiente' : 'cg-saldo-ok'}">Q${computeSaldo(r).toFixed(2)}</td>
     </tr>
-  `).join('') : `<tr><td colspan="6"><div class="empty-state">Sin registros.</div></td></tr>`;
+  `).join('');
+
+  const tableWithTotal = (arr, emptyLabel) => {
+    const t = sectionTotals(arr);
+    return `
+      <div class="table-scroll">
+        <table class="agenda-table">
+          <thead><tr><th>Fecha</th><th class="col-desc">Paciente</th><th class="col-desc">Descripción</th><th>Total</th><th>Abono</th><th>PEND. DE PAGAR</th></tr></thead>
+          <tbody>
+            ${arr.length ? rowsHtml(arr) : `<tr><td colspan="6"><div class="empty-state">${emptyLabel}</div></td></tr>`}
+            <tr class="cg-total-row">
+              <td colspan="3">TOTAL</td>
+              <td class="mono">Q${t.total.toFixed(2)}</td>
+              <td class="mono">Q${t.abono.toFixed(2)}</td>
+              <td class="mono ${t.saldo > 0 ? 'cg-saldo-pendiente' : 'cg-saldo-ok'}">Q${t.saldo.toFixed(2)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    `;
+  };
+
+  const fechaLabel = formatIsoDateDMY(dateKeyToday());
 
   inline.innerHTML = `
-    <div class="agenda-header-bar" style="margin-top:22px;">
-      <div class="agenda-title-block">
-        <h2>Estado de Cuenta — ${escapeHtml(doctor)}</h2>
-        <div class="agenda-subtitle">${list.length} registro(s) encontrados.</div>
-      </div>
+    <div class="cg-estado-letterhead">
+      <div class="cg-estado-doc-label">DR(A). ${escapeHtml(doctor)}</div>
+      <img src="assets/images-removebg-preview.png" alt="Unión Dental" class="cg-estado-logo">
+      <div class="cg-estado-fecha-label">FECHA: ${escapeHtml(fechaLabel)}</div>
     </div>
     <h3 style="margin:14px 0 8px;">Pendientes</h3>
-    <div class="table-scroll">
-      <table class="agenda-table">
-        <thead><tr><th>Fecha</th><th class="col-desc">Paciente</th><th class="col-desc">Descripción</th><th>Total</th><th>Abono</th><th>Saldo</th></tr></thead>
-        <tbody>${rowsHtml(pendientes)}</tbody>
-      </table>
-    </div>
+    ${tableWithTotal(pendientes, 'Sin registros pendientes.')}
     <h3 style="margin:18px 0 8px;">Cancelados</h3>
-    <div class="table-scroll">
-      <table class="agenda-table">
-        <thead><tr><th>Fecha</th><th class="col-desc">Paciente</th><th class="col-desc">Descripción</th><th>Total</th><th>Abono</th><th>Saldo</th></tr></thead>
-        <tbody>${rowsHtml(cancelados)}</tbody>
-      </table>
-    </div>
+    ${tableWithTotal(cancelados, 'Sin registros cancelados.')}
     <div class="agenda-footer-bar" style="margin-top:14px;gap:20px;">
       <span class="mono">Total General: Q${totalGeneral.toFixed(2)}</span>
       <span class="mono">Total Abonado: Q${totalAbonado.toFixed(2)}</span>
-      <span class="mono ${saldoPendiente > 0 ? 'cg-saldo-pendiente' : 'cg-saldo-ok'}">Saldo Pendiente: Q${saldoPendiente.toFixed(2)}</span>
+      <span class="mono ${saldoPendiente > 0 ? 'cg-saldo-pendiente' : 'cg-saldo-ok'}">PEND. DE PAGAR: Q${saldoPendiente.toFixed(2)}</span>
     </div>
   `;
 }

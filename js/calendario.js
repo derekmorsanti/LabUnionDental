@@ -2,15 +2,15 @@
 // calendario.js — selección de mes + vista mensual con notas por día.
 // ============================================================================
 
-import { getCurrentUser } from './auth.js?v16';
-import { getCalendarMonth, saveCalendarMonth } from './data-store.js?v16';
-import { forceReconnectFirestore } from './firebase-config.js?v16';
-import { captureElementToImage } from './export.js?v16';
-import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v16';
+import { getCurrentUser } from './auth.js?v18';
+import { getCalendarMonth, saveCalendarMonth } from './data-store.js?v18';
+import { forceReconnectFirestore } from './firebase-config.js?v18';
+import { captureElementToImage } from './export.js?v18';
+import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v18';
 import {
   MESES_ES, getAvailableMonths, getMonthMeta, getGuatemalaParts,
   escapeHtml, capitalize, debounce, fetchWithRetry, describeFirestoreError, withTimeout
-} from './utils.js?v16';
+} from './utils.js?v18';
 
 let monthState = { key: null, notes: {} };
 // Año/mes del grid actualmente pintado — el listener delegado de clic en

@@ -3,13 +3,13 @@
 // de sesión y conecta todos los módulos entre sí.
 // ============================================================================
 
-import { isFirebaseConfigured, forceReconnectFirestore } from './firebase-config.js?v16';
+import { isFirebaseConfigured, forceReconnectFirestore } from './firebase-config.js?v18';
 import {
   onAuthChange, getUserProfileName, logoutUser,
   registerUser, loginUser, friendlyAuthError
-} from './auth.js?v16';
-import { renderDashboard } from './dashboard.js?v16';
-import { closeModal, showToast } from './ui-helpers.js?v16';
+} from './auth.js?v18';
+import { renderDashboard } from './dashboard.js?v18';
+import { closeModal, showToast } from './ui-helpers.js?v18';
 
 // Los módulos de cada sección (Agenda, Historial, Calendario, Control
 // General, Datos) se cargan bajo demanda la primera vez que el usuario
@@ -17,11 +17,11 @@ import { closeModal, showToast } from './ui-helpers.js?v16';
 // con main.js. Cada import() se resuelve una sola vez por sesión — el
 // propio motor de módulos de ES6 cachea el resultado, así que navegar de
 // ida y vuelta a la misma sección no vuelve a pedirla por red.
-const loadAgendaMod = () => import('./agenda.js?v16');
-const loadHistorialMod = () => import('./historial.js?v16');
-const loadCalendarioMod = () => import('./calendario.js?v16');
-const loadControlGeneralMod = () => import('./control-general.js?v16');
-const loadDatosMod = () => import('./datos.js?v16');
+const loadAgendaMod = () => import('./agenda.js?v18');
+const loadHistorialMod = () => import('./historial.js?v18');
+const loadCalendarioMod = () => import('./calendario.js?v18');
+const loadControlGeneralMod = () => import('./control-general.js?v18');
+const loadDatosMod = () => import('./datos.js?v18');
 
 // Red de seguridad global: cualquier error de JavaScript no controlado en
 // ningún punto de la app (o cualquier promesa rechazada sin su propio
