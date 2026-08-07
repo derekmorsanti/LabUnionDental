@@ -36,18 +36,18 @@
 import {
   getAgendaConfig, getAllPointColumns, computeRowTotal, computeGrandTotal,
   computeColumnSum, defaultRow, cellUnits, FALLBACK_POINT_VALUE
-} from './agenda-configs.js?v12';
-import { getCurrentUser } from './auth.js?v12';
+} from './agenda-configs.js?v15';
+import { getCurrentUser } from './auth.js?v15';
 import {
   getAgendaDay, autosaveAgendaDay, saveAgendaDay,
   getAgendaExtraColumns, saveAgendaExtraColumns
-} from './data-store.js?v12';
+} from './data-store.js?v15';
 import {
   dateKeyToday, formatAgendaHeaderDate, debounce, escapeHtml, toNumber, generateId, round2,
   fetchWithRetry, describeFirestoreError
-} from './utils.js?v12';
-import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v12';
-import { captureElementToImage } from './export.js?v12';
+} from './utils.js?v15';
+import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v15';
+import { captureElementToImage } from './export.js?v15';
 
 // ----------------------------------------------------------------------------
 // Botón "AGREGAR" por fila: crea una fila nueva en OTRA agenda (Yesos,
@@ -58,13 +58,26 @@ import { captureElementToImage } from './export.js?v12';
 // ----------------------------------------------------------------------------
 const AGREGAR_TARGETS = [
   { label: 'Yesos', agendaId: 'cony' },
-  { label: 'Metales', agendaId: 'abner' },
-  { label: 'Tallado', agendaId: 'astryd' },
   { label: 'Encerado', agendaId: 'dina' },
-  { label: 'Pretallado', agendaId: 'eliu' }
+  { label: 'Metales', agendaId: 'abner' },
+  { label: 'Pretallado', agendaId: 'eliu' },
+  { label: 'Tallado', agendaId: 'astryd' }
 ];
 
 const DEFAULT_ROW_COUNT = 12;
+
+// Paleta de colores disponibles para pintar el texto de una fila completa
+// (5 colores, sin negro/por-defecto). Flujo: clic en una fila para
+// seleccionarla (se resalta) → clic en un color → el texto de TODA esa
+// fila cambia de inmediato a ese color y se guarda en row.rowColor.
+const CELL_COLORS = [
+  { key: 'red', label: 'Rojo', hex: '#dc2626' },
+  { key: 'blue', label: 'Azul', hex: '#2563eb' },
+  { key: 'green', label: 'Verde', hex: '#16a34a' },
+  { key: 'orange', label: 'Naranja', hex: '#ea580c' },
+  { key: 'yellow', label: 'Amarillo', hex: '#eab308' }
+];
+const RED_COLUMN_HEX = '#dc2626';
 
 // Estado de cada instancia visible actualmente, indexado por key ('' cuando
 // la agenda no está dividida; 'am' / 'pm' cuando sí lo está).
@@ -146,6 +159,11 @@ function panelHtml(config, inst) {
           <button class="btn btn-outline btn-sm" id="${eid('btn-download-agenda', key)}">Descargar</button>
           <button class="btn btn-brass btn-sm" id="${eid('btn-save-agenda', key)}">Guardar</button>
         </div>
+      </div>
+
+      <div class="cell-color-picker" id="${eid('cell-color-picker', key)}">
+        <span class="ccp-label">Color de fila: (clic en una fila, luego en un color)</span>
+        ${CELL_COLORS.map(c => `<button type="button" class="ccp-swatch" data-color="${c.key}" style="background:${c.hex};" title="${escapeHtml(c.label)}"></button>`).join('')}
       </div>
 
       <div id="${eid('agenda-load-warning', key)}" class="hidden" style="margin-bottom:14px;"></div>
@@ -239,11 +257,12 @@ async function loadInstance(config, agendaId, uid, baseDateKey, inst) {
   // respuesta tardía encima de lo que ahora está en pantalla.
   if (instTokens[key] !== myToken) return;
 
-  let rows, extraColumns, meta;
+  let rows, extraColumns, meta, redColumns;
   if (existing) {
     rows = (existing.rows && existing.rows.length) ? existing.rows : [defaultRow()];
     extraColumns = existing.extraColumns || [];
     meta = existing.meta || {};
+    redColumns = existing.redColumns || {};
   } else {
     extraColumns = [];
     if (!loadError) {
@@ -256,7 +275,22 @@ async function loadInstance(config, agendaId, uid, baseDateKey, inst) {
     }
     rows = Array.from({ length: DEFAULT_ROW_COUNT }, () => defaultRow());
     meta = {};
+    redColumns = {};
   }
+  // Compatibilidad hacia atrás: filas de versiones anteriores traían
+  // `colors` (color por casilla) o no traían ningún color — se normalizan
+  // aquí a un único `rowColor` por fila (color de fila completa).
+  rows.forEach(r => {
+    if (r.rowColor === undefined || r.rowColor === null) {
+      if (r.colors && typeof r.colors === 'object') {
+        const firstColorKey = Object.values(r.colors)[0];
+        r.rowColor = CELL_COLORS.some(c => c.key === firstColorKey) ? firstColorKey : null;
+      } else {
+        r.rowColor = null;
+      }
+    }
+    delete r.colors;
+  });
 
   const [yy, mm, dd] = baseDateKey.split('-').map(Number);
   const weekday = new Intl.DateTimeFormat('es-GT', { weekday: 'long', timeZone: 'UTC' })
@@ -269,7 +303,8 @@ async function loadInstance(config, agendaId, uid, baseDateKey, inst) {
 
   panels[key] = {
     key, label, agendaId, storageAgendaId, config,
-    dateKey, baseDateKey, uid, rows, extraColumns, meta
+    dateKey, baseDateKey, uid, rows, extraColumns, meta,
+    redColumns, selectedRowId: null
   };
 
   renderTable(key);
@@ -301,46 +336,80 @@ function buildColumnList(key) {
 // ----------------------------------------------------------------------------
 // Render completo (encabezado + cuerpo + pie) de UNA instancia
 // ----------------------------------------------------------------------------
+function headCellHtml(c, redColumns) {
+  const isRed = !!(redColumns && redColumns[c.id]);
+  const redCls = isRed ? ' col-red-active' : '';
+  if (c.kind === 'text') {
+    const cls = (c.id === 'doctor' ? 'col-doctor' : 'col-desc') + ' col-clickable' + redCls;
+    return `<th class="${cls}" data-colid="${escapeHtml(c.id)}" title="Clic para resaltar esta columna en rojo">${escapeHtml(c.label)}</th>`;
+  }
+  const weightLabel = c.kind === 'point-extra-eliu'
+    ? '(× UNIDAD)'
+    : `(${(c.weight != null ? c.weight : FALLBACK_POINT_VALUE)})`;
+  return `<th class="col-clickable${redCls}" data-colid="${escapeHtml(c.id)}" title="Clic para resaltar esta columna en rojo">${escapeHtml(c.label)}<span class="col-weight">${weightLabel}</span></th>`;
+}
+
 function renderTable(key) {
   const state = panels[key];
   if (!state) return;
   const cols = buildColumnList(key);
   const thead = g('agenda-thead', key);
-  const headCells = cols.map(c => {
-    if (c.kind === 'text') {
-      const cls = c.id === 'doctor' ? 'col-doctor' : 'col-desc';
-      return `<th class="${cls}">${escapeHtml(c.label)}</th>`;
-    }
-    const weightLabel = c.kind === 'point-extra-eliu'
-      ? '(× UNIDAD)'
-      : `(${(c.weight != null ? c.weight : FALLBACK_POINT_VALUE)})`;
-    return `<th>${escapeHtml(c.label)}<span class="col-weight">${weightLabel}</span></th>`;
-  }).join('');
+  const headCells = cols.map(c => headCellHtml(c, state.redColumns)).join('');
   const totalTh = state.config.hasPoints ? `<th class="col-total">${escapeHtml(state.config.totalLabel)}</th>` : '';
   thead.innerHTML = `<tr>${headCells}${totalTh}<th class="row-actions-col"></th></tr>`;
+  wireHeadEvents(key);
 
-  renderBody(key);
-  renderFooter(key);
+  renderBody(key, cols);
+  renderFooter(key, cols);
   updatePointsBadge(key);
 }
 
-function renderBody(key) {
+// ----------------------------------------------------------------------------
+// Clic en el encabezado de una columna: alterna el texto de esa columna en
+// rojo (delegado una sola vez sobre el <thead>, igual que wireBodyEvents).
+// ----------------------------------------------------------------------------
+function wireHeadEvents(key) {
+  const thead = g('agenda-thead', key);
+  if (!thead || thead.dataset.delegated === '1') return;
+  thead.dataset.delegated = '1';
+  thead.addEventListener('click', (e) => {
+    const th = e.target.closest('th[data-colid]');
+    if (!th) return;
+    const state = panels[key];
+    if (!state) return;
+    if (!state.redColumns) state.redColumns = {};
+    const colId = th.dataset.colid;
+    state.redColumns[colId] = !state.redColumns[colId];
+    renderTable(key);
+    scheduleAutosave(key);
+  });
+}
+
+function renderBody(key, precomputedCols) {
   const state = panels[key];
   if (!state) return;
-  const cols = buildColumnList(key);
+  const cols = precomputedCols || buildColumnList(key);
   const tbody = g('agenda-tbody', key);
 
   tbody.innerHTML = state.rows.map(row => {
+    const rowColorDef = row.rowColor ? CELL_COLORS.find(cc => cc.key === row.rowColor) : null;
+    const rowHex = rowColorDef ? rowColorDef.hex : null;
+    const isSelected = state.selectedRowId === row.id;
+
     const tds = cols.map(c => {
       const val = (row.cells[c.id] !== undefined && row.cells[c.id] !== null) ? row.cells[c.id] : '';
+      const isRedCol = !!(state.redColumns && state.redColumns[c.id]);
+      const finalHex = isRedCol ? RED_COLUMN_HEX : rowHex;
       if (c.kind === 'text') {
         const cls = c.id === 'doctor' ? 'col-doctor' : 'col-desc';
-        return `<td class="${cls}"><input class="cell-text" type="text" value="${escapeHtml(val)}" data-row="${row.id}" data-col="${c.id}"></td>`;
+        const inputStyle = finalHex ? ` style="color:${finalHex};"` : '';
+        return `<td class="${cls}"><input class="cell-text" type="text" value="${escapeHtml(val)}" data-row="${row.id}" data-col="${c.id}"${inputStyle}></td>`;
       }
       const isMarked = val === 'X';
       const hasNumber = val !== '' && val !== 'X';
       const cls = ['cell-point', isMarked ? 'marked' : '', hasNumber ? 'has-number' : ''].filter(Boolean).join(' ');
-      const display = isMarked ? '<span class="mark-x">X</span>' : (hasNumber ? escapeHtml(String(val)) : '');
+      const spanStyle = finalHex ? ` style="color:${finalHex};border-color:${finalHex};"` : '';
+      const display = isMarked ? `<span class="mark-x"${spanStyle}>X</span>` : (hasNumber ? `<span${spanStyle}>${escapeHtml(String(val))}</span>` : '');
       return `<td class="${cls}" data-row="${row.id}" data-col="${c.id}">${display}</td>`;
     }).join('');
 
@@ -348,16 +417,30 @@ function renderBody(key) {
       ? `<td class="cell-total">${round2(computeRowTotal(state.config, row, state.extraColumns)).toFixed(2)}</td>`
       : '';
 
-    return `<tr>${tds}${totalTd}<td class="row-actions-col"><button class="row-agregar-btn" data-agregar="${row.id}" title="Agregar a otra agenda">→</button><button class="row-delete-btn" data-delrow="${row.id}" title="Eliminar fila">✕</button></td></tr>`;
+    return `<tr data-row="${row.id}" class="${isSelected ? 'row-selected' : ''}">${tds}${totalTd}<td class="row-actions-col"><button class="row-agregar-btn" data-agregar="${row.id}" title="Agregar a otra agenda">→</button><button class="row-delete-btn" data-delrow="${row.id}" title="Eliminar fila">✕</button></td></tr>`;
   }).join('');
 
   wireBodyEvents(key);
+  syncColorPicker(key);
 }
 
-function renderFooter(key) {
+/** Refleja en la paleta de colores cuál color (si alguno) tiene la fila actualmente seleccionada. */
+function syncColorPicker(key) {
   const state = panels[key];
   if (!state) return;
-  const cols = buildColumnList(key);
+  const colorPicker = g('cell-color-picker', key);
+  if (!colorPicker) return;
+  const row = state.rows.find(r => r.id === state.selectedRowId);
+  const currentColor = row ? row.rowColor : null;
+  colorPicker.querySelectorAll('[data-color]').forEach(b => {
+    b.classList.toggle('active', !!currentColor && b.dataset.color === currentColor);
+  });
+}
+
+function renderFooter(key, precomputedCols) {
+  const state = panels[key];
+  if (!state) return;
+  const cols = precomputedCols || buildColumnList(key);
   const tfoot = g('agenda-tfoot', key);
 
   let totalCells = '';
@@ -414,40 +497,63 @@ function updatePointsBadge(key) {
 // ----------------------------------------------------------------------------
 // Interacción de celdas (todo escoteado a la instancia `key`)
 // ----------------------------------------------------------------------------
+function selectRow(key, rowId) {
+  const state = panels[key];
+  if (!state || state.selectedRowId === rowId) return;
+  state.selectedRowId = rowId;
+  const tbody = g('agenda-tbody', key);
+  if (tbody) {
+    tbody.querySelectorAll('tr[data-row]').forEach(tr => {
+      tr.classList.toggle('row-selected', tr.dataset.row === rowId);
+    });
+  }
+  syncColorPicker(key);
+}
+
 function wireBodyEvents(key) {
   const tbody = g('agenda-tbody', key);
-  if (!tbody) return;
+  if (!tbody || tbody.dataset.delegated === '1') return;
+  tbody.dataset.delegated = '1';
 
-  tbody.querySelectorAll('.cell-text').forEach(input => {
-    input.addEventListener('input', (e) => {
-      const state = panels[key];
-      if (!state) return;
-      const row = state.rows.find(r => r.id === e.target.dataset.row);
-      if (!row) return;
-      row.cells[e.target.dataset.col] = e.target.value;
-      refreshTotalsOnly(key);
-      scheduleAutosave(key);
-    });
+  tbody.addEventListener('input', (e) => {
+    const input = e.target.closest('.cell-text');
+    if (!input || !tbody.contains(input)) return;
+    selectRow(key, input.dataset.row);
+    const state = panels[key];
+    if (!state) return;
+    const row = state.rows.find(r => r.id === input.dataset.row);
+    if (!row) return;
+    row.cells[input.dataset.col] = input.value;
+    refreshTotalsOnly(key);
+    scheduleAutosave(key);
   });
 
-  tbody.querySelectorAll('td.cell-point').forEach(td => {
-    td.addEventListener('click', () => handlePointClick(key, td));
-    td.addEventListener('dblclick', (e) => { e.preventDefault(); handlePointDblClick(key, td); });
-  });
+  tbody.addEventListener('click', (e) => {
+    const tr = e.target.closest('tr[data-row]');
+    if (tr) selectRow(key, tr.dataset.row);
 
-  tbody.querySelectorAll('[data-agregar]').forEach(btn => {
-    btn.addEventListener('click', () => openAgregarModal(key, btn.dataset.agregar));
-  });
+    const agregarBtn = e.target.closest('[data-agregar]');
+    if (agregarBtn) { openAgregarModal(key, agregarBtn.dataset.agregar); return; }
 
-  tbody.querySelectorAll('[data-delrow]').forEach(btn => {
-    btn.addEventListener('click', () => {
+    const delBtn = e.target.closest('[data-delrow]');
+    if (delBtn) {
       const state = panels[key];
       if (!state) return;
       if (state.rows.length <= 1) { showToast('Debe quedar al menos una fila', true); return; }
       if (!confirm('¿Eliminar esta fila?')) return;
-      state.rows = state.rows.filter(r => r.id !== btn.dataset.delrow);
+      state.rows = state.rows.filter(r => r.id !== delBtn.dataset.delrow);
+      if (state.selectedRowId === delBtn.dataset.delrow) state.selectedRowId = null;
       renderBody(key); renderFooter(key); updatePointsBadge(key); scheduleAutosave(key);
-    });
+      return;
+    }
+
+    const pointTd = e.target.closest('td.cell-point');
+    if (pointTd) { handlePointClick(key, pointTd); return; }
+  });
+
+  tbody.addEventListener('dblclick', (e) => {
+    const pointTd = e.target.closest('td.cell-point');
+    if (pointTd) { e.preventDefault(); handlePointDblClick(key, pointTd); }
   });
 }
 
@@ -472,8 +578,10 @@ function handlePointClick(key, td) {
   if (!state) return;
   const row = state.rows.find(r => r.id === td.dataset.row);
   if (!row) return;
-  const cur = row.cells[td.dataset.col];
-  row.cells[td.dataset.col] = (cur === 'X') ? '' : 'X';
+  selectRow(key, row.id);
+  const colId = td.dataset.col;
+  const cur = row.cells[colId];
+  row.cells[colId] = (cur === 'X') ? '' : 'X';
   renderBody(key); renderFooter(key); updatePointsBadge(key); scheduleAutosave(key);
 }
 
@@ -482,6 +590,7 @@ function handlePointDblClick(key, td) {
   if (!state) return;
   const row = state.rows.find(r => r.id === td.dataset.row);
   if (!row) return;
+  selectRow(key, row.id);
   const current = row.cells[td.dataset.col];
   const currentNum = (current && current !== 'X') ? current : '';
 
@@ -596,7 +705,7 @@ function wireToolbar(key) {
       setSaveStatus(key, 'Guardando…', 'saving');
       try {
         await fetchWithRetry(() => saveAgendaDay(state.uid, state.agendaId, state.dateKey, {
-          rows: state.rows, extraColumns: state.extraColumns, meta: state.meta
+          rows: state.rows, extraColumns: state.extraColumns, meta: state.meta, redColumns: state.redColumns
         }), { label: 'guardar agenda' });
         setSaveStatus(key, 'Guardado ✓', 'saved');
         showToast(state.label ? `Agenda (${state.label}) guardada en el historial` : 'Agenda guardada en el historial');
@@ -606,6 +715,27 @@ function wireToolbar(key) {
         showToast(describeFirestoreError(e), true);
       }
     };
+  }
+
+  const colorPicker = g('cell-color-picker', key);
+  if (colorPicker) {
+    colorPicker.querySelectorAll('[data-color]').forEach(btn => {
+      btn.onclick = () => {
+        const state = panels[key];
+        if (!state) return;
+        if (!state.selectedRowId) {
+          showToast('Primero haz clic en una fila para seleccionarla', true);
+          return;
+        }
+        const row = state.rows.find(r => r.id === state.selectedRowId);
+        if (!row) return;
+        const colorKey = btn.dataset.color;
+        row.rowColor = (row.rowColor === colorKey) ? null : colorKey;
+        renderBody(key);
+        renderFooter(key);
+        scheduleAutosave(key);
+      };
+    });
   }
 
   const addRowBtn = g('btn-add-row', key);
@@ -721,7 +851,7 @@ function getAutosaveFn(key) {
       setSaveStatus(key, 'Guardando…', 'saving');
       try {
         await fetchWithRetry(() => autosaveAgendaDay(state.uid, state.agendaId, state.dateKey, {
-          rows: state.rows, extraColumns: state.extraColumns, meta: state.meta
+          rows: state.rows, extraColumns: state.extraColumns, meta: state.meta, redColumns: state.redColumns
         }), { retries: 1, label: 'autoguardado' });
         setSaveStatus(key, 'Guardado automáticamente', 'saved');
       } catch (e) {

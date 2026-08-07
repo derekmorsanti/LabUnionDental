@@ -5,7 +5,10 @@
    IBM Plex Mono (datos numéricos de las tablas de producción).
    ========================================================================== */
 
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+/* Space Grotesk / Inter / IBM Plex Mono se cargan desde index.html con
+   <link rel="stylesheet"> + preconnect, en vez de @import aquí — @import
+   fuerza una carga en serie (primero este archivo, luego el de Google
+   Fonts); un <link> en el <head> se descubre y descarga en paralelo. */
 
 :root{
   /* --- Color: base grafito-teal --- */
@@ -365,6 +368,42 @@ table.agenda-table{ border-collapse: collapse; width: 100%; min-width: 640px; }
   font-family: var(--font-mono); font-weight: 700; background: var(--surface-sunk);
   color: var(--ink);
 }
+
+/* Selector de color de casillas (mínimo 5 colores) */
+.cell-color-picker{
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px;
+}
+.ccp-label{ font-size: 12.5px; color: var(--ink-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.02em; }
+.ccp-swatch{
+  width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line-strong);
+  cursor: pointer; padding: 0; background: var(--surface); position: relative;
+}
+.ccp-swatch.active{ box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--brass-deep); }
+.ccp-swatch:hover{ transform: scale(1.08); }
+
+/* Columna con encabezado clicable (alterna texto en rojo) */
+.agenda-table thead th.col-clickable{ cursor: pointer; }
+.agenda-table thead th.col-clickable:hover{ background: var(--ink-soft, #2a2a2a); }
+.agenda-table thead th.col-red-active{ background: #dc2626; }
+.agenda-table thead th.col-red-active .col-weight{ color: #ffe4e4; }
+.agenda-table tbody tr.row-selected td{ box-shadow: inset 0 0 0 9999px rgba(37,99,235,0.10); }
+.agenda-table tbody tr.row-selected td:first-child{ box-shadow: inset 3px 0 0 var(--brass-deep), inset 0 0 0 9999px rgba(37,99,235,0.10); }
+
+/* Subrayado de notas del calendario */
+/* Subrayado (parcial, solo el texto seleccionado) de las notas del calendario */
+.calendar-day .d-note u, .day-note-editable u{
+  text-decoration-line: underline;
+  text-decoration-color: #38bdf8;
+  text-decoration-thickness: 2px;
+}
+.day-note-toolbar{ display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.day-note-editable{
+  width: 100%; min-height: 110px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-md);
+  padding: 10px 12px; margin-bottom: 18px; overflow-y: auto; max-height: 260px;
+  font-family: inherit; font-size: inherit; color: inherit; white-space: pre-wrap;
+}
+.day-note-editable:focus{ outline: none; border-color: var(--brass); }
+
 .agenda-table tfoot td{
   background: var(--ink); color: var(--panel-ink); font-weight: 700; font-family: var(--font-mono);
   padding: 10px 8px; border: 1px solid var(--panel-2);

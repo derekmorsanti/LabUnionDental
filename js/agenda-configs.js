@@ -33,27 +33,6 @@
 
 export const AGENDAS = [
   {
-    id: 'eliu', personName: 'Eliu', processName: 'Pretallado',
-    hasPoints: true, totalLabel: 'TOTAL PTS',
-    leadingColumns: [
-      { id: 'doctor', label: 'DOCTOR/PX', kind: 'text' },
-      { id: 'desc', label: 'DESC.', kind: 'text' },
-      { id: 'unidad', label: 'UNIDAD', kind: 'text', numeric: true, summedInFooter: true }
-    ],
-    pointColumns: [
-      { id: 'ox_wa_op', label: 'OX / WA / OP', weight: 0.30, kind: 'point' },
-      { id: 'bod_incs', label: 'BOD / INCS', weight: 0.60, kind: 'point' },
-      { id: 'bod_incs_anter', label: 'BOD/INCS ANTER', weight: 0.70, kind: 'point' },
-      { id: 'tallar', label: 'TALLAR', weight: 0.50, kind: 'point' },
-      { id: 'term', label: 'TERM', weight: 0.10, kind: 'point' },
-      { id: 'h_c', label: 'H/C', weight: 0.25, kind: 'point' },
-      { id: 'adapt_emax', label: 'ADAPT / EMAX', weight: 0.20, kind: 'point' },
-      { id: 'calib_wa_emax', label: 'CALIB / WA EMAX', weight: 0.20, kind: 'point' },
-      { id: 'calib_wa_care', label: 'CALIB / WA CARE', weight: 0.60, kind: 'point' }
-    ],
-    extraColumn: { id: 'extra', label: 'EXTRA', kind: 'point-extra-eliu' }
-  },
-  {
     id: 'cony', personName: 'Cony', processName: 'Yesos',
     hasPoints: false,
     // La agenda de Cony se divide en dos tandas independientes (mañana y
@@ -68,23 +47,6 @@ export const AGENDAS = [
       { id: 'unid', label: 'UNID.', kind: 'text', numeric: true, summedInFooter: true }
     ],
     pointColumns: [], extraColumn: null
-  },
-  {
-    id: 'abner', personName: 'Abner', processName: 'Metales',
-    hasPoints: true, totalLabel: 'PUNTOS OBTENIDOS',
-    leadingColumns: [
-      { id: 'doctor', label: 'DOCTOR/PX', kind: 'text' },
-      { id: 'desc', label: 'DESC.', kind: 'text' },
-      { id: 'unidad', label: 'UNIDAD', kind: 'text', numeric: true, summedInFooter: true }
-    ],
-    pointColumns: [
-      { id: 'limpiar_anillo', label: 'LIMPIAR ANILLO', weight: 0.15, kind: 'point' },
-      { id: 'adaptar', label: 'ADAPTAR', weight: 0.25, kind: 'point' },
-      { id: 'calibrar', label: 'CALIBRAR', weight: 0.30, kind: 'point' },
-      { id: 'peinar_margenes', label: 'PEINAR MARGENES/ PASAR PIEDRA', weight: 0.30, kind: 'point' },
-      { id: 'arenar', label: 'ARENAR', weight: 0.10, kind: 'point' }
-    ],
-    extraColumn: { id: 'extra', label: 'EXTRA', kind: 'point', weight: 0.75 }
   },
   {
     id: 'dina', personName: 'Dina', processName: 'Encerado',
@@ -110,6 +72,44 @@ export const AGENDAS = [
       { id: 'lib_marg_resin', label: 'LIB. MARG RESIN', weight: 0.30, kind: 'point' }
     ],
     extraColumn: { id: 'extra', label: 'EXTRA', kind: 'point', weight: 0.75 }
+  },
+  {
+    id: 'abner', personName: 'Abner', processName: 'Metales',
+    hasPoints: true, totalLabel: 'PUNTOS OBTENIDOS',
+    leadingColumns: [
+      { id: 'doctor', label: 'DOCTOR/PX', kind: 'text' },
+      { id: 'desc', label: 'DESC.', kind: 'text' },
+      { id: 'unidad', label: 'UNIDAD', kind: 'text', numeric: true, summedInFooter: true }
+    ],
+    pointColumns: [
+      { id: 'limpiar_anillo', label: 'LIMPIAR ANILLO', weight: 0.15, kind: 'point' },
+      { id: 'adaptar', label: 'ADAPTAR', weight: 0.25, kind: 'point' },
+      { id: 'calibrar', label: 'CALIBRAR', weight: 0.30, kind: 'point' },
+      { id: 'peinar_margenes', label: 'PEINAR MARGENES/ PASAR PIEDRA', weight: 0.30, kind: 'point' },
+      { id: 'arenar', label: 'ARENAR', weight: 0.10, kind: 'point' }
+    ],
+    extraColumn: { id: 'extra', label: 'EXTRA', kind: 'point', weight: 0.75 }
+  },
+  {
+    id: 'eliu', personName: 'Eliu', processName: 'Pretallado',
+    hasPoints: true, totalLabel: 'TOTAL PTS',
+    leadingColumns: [
+      { id: 'doctor', label: 'DOCTOR/PX', kind: 'text' },
+      { id: 'desc', label: 'DESC.', kind: 'text' },
+      { id: 'unidad', label: 'UNIDAD', kind: 'text', numeric: true, summedInFooter: true }
+    ],
+    pointColumns: [
+      { id: 'ox_wa_op', label: 'OX / WA / OP', weight: 0.30, kind: 'point' },
+      { id: 'bod_incs', label: 'BOD / INCS', weight: 0.60, kind: 'point' },
+      { id: 'bod_incs_anter', label: 'BOD/INCS ANTER', weight: 0.70, kind: 'point' },
+      { id: 'tallar', label: 'TALLAR', weight: 0.50, kind: 'point' },
+      { id: 'term', label: 'TERM', weight: 0.10, kind: 'point' },
+      { id: 'h_c', label: 'H/C', weight: 0.25, kind: 'point' },
+      { id: 'adapt_emax', label: 'ADAPT / EMAX', weight: 0.20, kind: 'point' },
+      { id: 'calib_wa_emax', label: 'CALIB / WA EMAX', weight: 0.20, kind: 'point' },
+      { id: 'calib_wa_care', label: 'CALIB / WA CARE', weight: 0.60, kind: 'point' }
+    ],
+    extraColumn: { id: 'extra', label: 'EXTRA', kind: 'point-extra-eliu' }
   },
   {
     id: 'astryd', personName: 'Astryd', processName: 'Tallado',
@@ -190,5 +190,5 @@ export function computeColumnSum(rows, colId) {
 let rowCounter = 0;
 export function defaultRow() {
   rowCounter += 1;
-  return { id: `row_${Date.now().toString(36)}_${rowCounter}`, cells: {} };
+  return { id: `row_${Date.now().toString(36)}_${rowCounter}`, cells: {}, rowColor: null };
 }

@@ -3,18 +3,25 @@
 // de sesión y conecta todos los módulos entre sí.
 // ============================================================================
 
-import { isFirebaseConfigured, forceReconnectFirestore } from './firebase-config.js?v12';
+import { isFirebaseConfigured, forceReconnectFirestore } from './firebase-config.js?v15';
 import {
   onAuthChange, getUserProfileName, logoutUser,
   registerUser, loginUser, friendlyAuthError
-} from './auth.js?v12';
-import { renderDashboard } from './dashboard.js?v12';
-import { renderAgenda } from './agenda.js?v12';
-import { renderHistorialSelect, renderHistorialList } from './historial.js?v12';
-import { renderCalendarioSelect, renderCalendarioMonth } from './calendario.js?v12';
-import { renderControlGeneral } from './control-general.js?v12';
-import { renderDatos } from './datos.js?v12';
-import { closeModal, showToast } from './ui-helpers.js?v12';
+} from './auth.js?v15';
+import { renderDashboard } from './dashboard.js?v15';
+import { closeModal, showToast } from './ui-helpers.js?v15';
+
+// Los módulos de cada sección (Agenda, Historial, Calendario, Control
+// General, Datos) se cargan bajo demanda la primera vez que el usuario
+// navega a esa sección, en vez de descargarse todos por adelantado junto
+// con main.js. Cada import() se resuelve una sola vez por sesión — el
+// propio motor de módulos de ES6 cachea el resultado, así que navegar de
+// ida y vuelta a la misma sección no vuelve a pedirla por red.
+const loadAgendaMod = () => import('./agenda.js?v15');
+const loadHistorialMod = () => import('./historial.js?v15');
+const loadCalendarioMod = () => import('./calendario.js?v15');
+const loadControlGeneralMod = () => import('./control-general.js?v15');
+const loadDatosMod = () => import('./datos.js?v15');
 
 // Red de seguridad global: cualquier error de JavaScript no controlado en
 // ningún punto de la app (o cualquier promesa rechazada sin su propio
@@ -67,34 +74,48 @@ async function navigate(view, param, extra) {
       showSubview('view-dashboard'); crumb.textContent = 'Agendas'; setActiveSidebar('dashboard');
       renderDashboard(currentUserName, navigate);
       break;
-    case 'agenda':
+    case 'agenda': {
       showSubview('view-agenda'); crumb.textContent = 'Agendas'; setActiveSidebar('dashboard');
+      const { renderAgenda } = await loadAgendaMod();
       await renderAgenda(param, navigate, extra);
       break;
-    case 'historial-select':
+    }
+    case 'historial-select': {
       showSubview('view-historial-select'); crumb.textContent = 'Historial'; setActiveSidebar('historial-select');
+      const { renderHistorialSelect } = await loadHistorialMod();
       renderHistorialSelect(navigate);
       break;
-    case 'historial-list':
+    }
+    case 'historial-list': {
       showSubview('view-historial-list'); crumb.textContent = 'Historial'; setActiveSidebar('historial-select');
+      const { renderHistorialList } = await loadHistorialMod();
       await renderHistorialList(param, navigate);
       break;
-    case 'calendario-select':
+    }
+    case 'calendario-select': {
       showSubview('view-calendario-select'); crumb.textContent = 'Calendario'; setActiveSidebar('calendario-select');
+      const { renderCalendarioSelect } = await loadCalendarioMod();
       renderCalendarioSelect(navigate);
       break;
-    case 'calendario-month':
+    }
+    case 'calendario-month': {
       showSubview('view-calendario-month'); crumb.textContent = 'Calendario'; setActiveSidebar('calendario-select');
+      const { renderCalendarioMonth } = await loadCalendarioMod();
       await renderCalendarioMonth(param, navigate);
       break;
-    case 'control-general':
+    }
+    case 'control-general': {
       showSubview('view-control-general'); crumb.textContent = 'Control General'; setActiveSidebar('control-general');
+      const { renderControlGeneral } = await loadControlGeneralMod();
       await renderControlGeneral(navigate);
       break;
-    case 'datos':
+    }
+    case 'datos': {
       showSubview('view-datos'); crumb.textContent = 'Datos'; setActiveSidebar('datos');
+      const { renderDatos } = await loadDatosMod();
       await renderDatos(navigate);
       break;
+    }
   }
 }
 

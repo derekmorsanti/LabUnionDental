@@ -2,23 +2,85 @@
 // calendario.js — selección de mes + vista mensual con notas por día.
 // ============================================================================
 
-import { getCurrentUser } from './auth.js?v12';
-import { getCalendarMonth, saveCalendarMonth } from './data-store.js?v12';
-import { forceReconnectFirestore } from './firebase-config.js?v12';
-import { captureElementToImage } from './export.js?v12';
-import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v12';
+import { getCurrentUser } from './auth.js?v15';
+import { getCalendarMonth, saveCalendarMonth } from './data-store.js?v15';
+import { forceReconnectFirestore } from './firebase-config.js?v15';
+import { captureElementToImage } from './export.js?v15';
+import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v15';
 import {
   MESES_ES, getAvailableMonths, getMonthMeta, getGuatemalaParts,
   escapeHtml, capitalize, debounce, fetchWithRetry, describeFirestoreError, withTimeout
-} from './utils.js?v12';
+} from './utils.js?v15';
 
 let monthState = { key: null, notes: {} };
+// Año/mes del grid actualmente pintado — el listener delegado de clic en
+// los días se adjunta una sola vez sobre el contenedor, así que necesita
+// leer estos valores en el momento del clic (no capturarlos en un closure
+// creado en un paintGrid() anterior).
+let currentGridYear = null;
+let currentGridMonth = null;
 // Token del mes que se está cargando: si el usuario navega a otro mes
 // antes de que termine, esa respuesta tardía se descarta.
 let monthToken = 0;
 // true una vez que las notas guardadas de Firestore terminaron de cargar
 // (o falló la carga) para el mes actualmente abierto.
 let notesReady = false;
+
+// Formatos de nota soportados (compatibilidad hacia atrás):
+//   1) string plano                → nota de antes de cualquier subrayado.
+//   2) { text, underline }         → nota con subrayado de TODO el texto
+//                                     (versión anterior de esta función).
+//   3) { html }                    → formato actual: HTML saneado (solo
+//                                     texto y <u>) donde el subrayado
+//                                     aplica solo a la parte seleccionada.
+// noteHtmlOf() siempre devuelve HTML ya seguro para insertar en el DOM.
+function noteHtmlOf(raw) {
+  if (!raw) return '';
+  if (typeof raw === 'string') return escapeHtml(raw);
+  if (typeof raw === 'object') {
+    if (typeof raw.html === 'string') return raw.html;
+    if (typeof raw.text === 'string') {
+      const esc = escapeHtml(raw.text);
+      return raw.underline ? `<u>${esc}</u>` : esc;
+    }
+  }
+  return '';
+}
+function noteHasContent(raw) {
+  const html = noteHtmlOf(raw);
+  return !!(html && html.replace(/<[^>]*>/g, '').trim() !== '');
+}
+
+/**
+ * Reconstruye el innerHTML de un editor `contenteditable` conservando
+ * ÚNICAMENTE texto y etiquetas <u> (subrayado) y saltos de línea — así se
+ * evita guardar cualquier otra etiqueta (negrita, imágenes, scripts, etc.)
+ * que el navegador pudiera insertar al pegar contenido externo.
+ */
+function sanitizeNoteHtml(rootNode) {
+  const walk = (node) => {
+    let out = '';
+    node.childNodes.forEach(child => {
+      if (child.nodeType === Node.TEXT_NODE) {
+        out += escapeHtml(child.textContent);
+      } else if (child.nodeType === Node.ELEMENT_NODE) {
+        const tag = child.tagName.toLowerCase();
+        const inner = walk(child);
+        if (tag === 'u') {
+          out += inner ? `<u>${inner}</u>` : '';
+        } else if (tag === 'br') {
+          out += '<br>';
+        } else if (tag === 'div' || tag === 'p') {
+          out += (out ? '<br>' : '') + inner;
+        } else {
+          out += inner;
+        }
+      }
+    });
+    return out;
+  };
+  return walk(rootNode);
+}
 
 export function renderCalendarioSelect(navigate) {
   const grid = document.getElementById('calendario-month-grid');
@@ -118,38 +180,79 @@ function paintGrid(year, month) {
   for (let i = 0; i < firstWeekday; i++) html += `<div class="calendar-day empty"></div>`;
   for (let d = 1; d <= daysInMonth; d++) {
     const isToday = isCurrentMonth && today.day === d;
-    const note = monthState.notes[String(d).padStart(2, '0')] || '';
+    const rawNote = monthState.notes[String(d).padStart(2, '0')];
+    const noteHtml = noteHtmlOf(rawNote);
+    const hasNote = noteHasContent(rawNote);
     html += `
       <div class="calendar-day ${isToday ? 'today' : ''}" data-day="${d}">
         <span class="d-num">${d}</span>
-        ${note ? `<div class="d-note">${escapeHtml(note)}</div>` : ''}
+        ${hasNote ? `<div class="d-note">${noteHtml}</div>` : ''}
       </div>`;
   }
   container.innerHTML = html;
-  container.querySelectorAll('[data-day]').forEach(el => {
-    el.addEventListener('click', () => openDayNoteModal(parseInt(el.dataset.day, 10), year, month));
-  });
+  if (container.dataset.delegated !== '1') {
+    container.dataset.delegated = '1';
+    container.addEventListener('click', (e) => {
+      const el = e.target.closest('[data-day]');
+      if (!el || !container.contains(el)) return;
+      openDayNoteModal(parseInt(el.dataset.day, 10), currentGridYear, currentGridMonth);
+    });
+  }
+  currentGridYear = year;
+  currentGridMonth = month;
 }
 
 function openDayNoteModal(day, year, month) {
   const key = String(day).padStart(2, '0');
-  const current = monthState.notes[key] || '';
+  const raw = monthState.notes[key];
+  const currentHtml = noteHtmlOf(raw);
   const box = openModal(`
     <h3>Nota del día ${day} de ${MESES_ES[month - 1]}</h3>
-    <p>Escribe o edita la nota para este día.</p>
-    <textarea id="day-note-input">${escapeHtml(current)}</textarea>
+    <p>Escribe la nota, selecciona el texto que quieras y usa "Subrayar" para resaltar solo esa parte.</p>
+    <div class="day-note-toolbar">
+      <button type="button" class="btn btn-outline btn-sm" id="day-note-underline-btn">Subrayar selección</button>
+    </div>
+    <div id="day-note-input" class="day-note-editable" contenteditable="true"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="day-note-cancel">Cancelar</button>
       <button class="btn btn-brass" id="day-note-save">Guardar nota</button>
     </div>
   `);
-  const input = box.querySelector('#day-note-input');
-  input.focus();
+  const editable = box.querySelector('#day-note-input');
+  editable.innerHTML = currentHtml;
+  editable.focus();
+
+  // Fuerza subrayado por etiqueta <u> (no por estilo inline), para que el
+  // saneador y la regla CSS "u{ text-decoration-color:#38bdf8 }" siempre
+  // apliquen de forma consistente sin importar el navegador.
+  try { document.execCommand('styleWithCSS', false, false); } catch (_) {}
+
+  box.querySelector('#day-note-underline-btn').addEventListener('click', () => {
+    editable.focus();
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+      showToast('Selecciona el texto que quieres subrayar', true);
+      return;
+    }
+    document.execCommand('underline');
+  });
+
+  // Pegar solo texto plano: evita que el navegador inserte HTML externo
+  // (negritas, imágenes, enlaces, etc.) que luego habría que sanear.
+  editable.addEventListener('paste', (e) => {
+    e.preventDefault();
+    const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+    document.execCommand('insertText', false, text);
+  });
+
   box.querySelector('#day-note-cancel').addEventListener('click', closeModal);
   box.querySelector('#day-note-save').addEventListener('click', () => {
-    const val = input.value;
-    if (val.trim() === '') delete monthState.notes[key];
-    else monthState.notes[key] = val;
+    const plainText = editable.textContent || '';
+    if (plainText.trim() === '') {
+      delete monthState.notes[key];
+    } else {
+      monthState.notes[key] = { html: sanitizeNoteHtml(editable) };
+    }
     closeModal();
     paintGrid(year, month);
     scheduleAutosave();

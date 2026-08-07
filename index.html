@@ -5,7 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Agendas de Producción</title>
 <link rel="icon" href="assets/images-removebg-preview.png">
-<link rel="stylesheet" href="css/styles.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://firestore.googleapis.com">
+<link rel="preconnect" href="https://identitytoolkit.googleapis.com">
+<link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="css/styles.css?v15">
+<link rel="preload" href="assets/images-removebg-preview.png" as="image">
 </head>
 <body>
 
@@ -254,14 +261,15 @@
 <div id="toast" class="toast"><span class="toast-dot"></span><span id="toast-text"></span></div>
 
 <!-- ==========================================================================
-     Librerías externas (CDN) — sin paso de compilación, compatible con GitHub Pages
+     html2canvas se carga bajo demanda desde js/export.js solo cuando el
+     usuario realmente descarga una imagen (Descargar), en vez de bloquear
+     la carga inicial de la página con esta librería pesada.
      ========================================================================== -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
 <!-- ==========================================================================
      Módulos de la aplicación (ES6)
      ========================================================================== -->
-<script type="module" src="js/main.js?v12"></script>
+<script type="module" src="js/main.js?v15"></script>
 
 </body>
 </html>

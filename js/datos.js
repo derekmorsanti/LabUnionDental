@@ -4,11 +4,11 @@
 // Control General y de las Agendas.
 // ============================================================================
 
-import { getCurrentUser } from './auth.js?v12';
-import { getAllDatosCatalogs, saveDatosCatalogs, saveDatosCatalog } from './data-store.js?v12';
-import { DATOS_CATALOGS } from './datos-seed.js?v12';
-import { escapeHtml, debounce, fetchWithRetry, describeFirestoreError } from './utils.js?v12';
-import { showToast } from './ui-helpers.js?v12';
+import { getCurrentUser } from './auth.js?v15';
+import { getAllDatosCatalogs, saveDatosCatalogs, saveDatosCatalog } from './data-store.js?v15';
+import { DATOS_CATALOGS } from './datos-seed.js?v15';
+import { escapeHtml, debounce, fetchWithRetry, describeFirestoreError } from './utils.js?v15';
+import { showToast } from './ui-helpers.js?v15';
 
 let state = {}; // { [catalogId]: items[] }
 let activeTab = DATOS_CATALOGS[0].id;
@@ -155,20 +155,27 @@ function paintList(uid) {
   if (!listEl) return;
   const cat = catalogDef(activeTab);
   const items = state[cat.id] || [];
-  const filtered = filterText
-    ? items.filter(it => itemLabel(cat, it).toLowerCase().includes(filterText.toLowerCase()))
-    : items;
+  const q = filterText ? filterText.toLowerCase() : '';
+  const indexed = items.map((it, idx) => [it, idx]);
+  const filtered = q
+    ? indexed.filter(([it]) => itemLabel(cat, it).toLowerCase().includes(q))
+    : indexed;
 
-  listEl.innerHTML = filtered.length ? filtered.map(it => `
-    <div class="datos-list-item" data-realidx="${items.indexOf(it)}">
+  listEl.innerHTML = filtered.length ? filtered.map(([it, idx]) => `
+    <div class="datos-list-item" data-realidx="${idx}">
       <span>${escapeHtml(itemLabel(cat, it))}</span>
-      <button class="row-delete-btn" data-del="${items.indexOf(it)}" title="Eliminar">✕</button>
+      <button class="row-delete-btn" data-del="${idx}" title="Eliminar">✕</button>
     </div>
   `).join('') : `<div class="empty-state">Sin resultados.</div>`;
 
-  listEl.querySelectorAll('[data-del]').forEach(btn => {
-    btn.addEventListener('click', () => removeItem(uid, parseInt(btn.dataset.del, 10)));
-  });
+  if (listEl.dataset.delegated !== '1') {
+    listEl.dataset.delegated = '1';
+    listEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-del]');
+      if (!btn) return;
+      removeItem(uid, parseInt(btn.dataset.del, 10));
+    });
+  }
 }
 
 function normalizeValue(cat, raw) {

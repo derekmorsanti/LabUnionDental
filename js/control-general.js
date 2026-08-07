@@ -6,20 +6,20 @@
 // alimentar sus listas desplegables.
 // ============================================================================
 
-import { getCurrentUser } from './auth.js?v12';
+import { getCurrentUser } from './auth.js?v15';
 import {
   listControlGeneral, saveControlGeneralRecord, deleteControlGeneralRecord,
   getAgendaDay, autosaveAgendaDay
-} from './data-store.js?v12';
-import { getAgendaConfig, defaultRow } from './agenda-configs.js?v12';
-import { ensureCatalogsLoaded, getCatalogItems } from './datos.js?v12';
-import { UNIDADES_1_32 } from './datos-seed.js?v12';
+} from './data-store.js?v15';
+import { getAgendaConfig, defaultRow } from './agenda-configs.js?v15';
+import { ensureCatalogsLoaded, getCatalogItems } from './datos.js?v15';
+import { UNIDADES_1_32 } from './datos-seed.js?v15';
 import {
   escapeHtml, debounce, toNumber, round2, generateId, dateKeyToday,
   getAvailableMonths, MESES_ES, capitalize, getGuatemalaParts,
   fetchWithRetry, describeFirestoreError
-} from './utils.js?v12';
-import { openModal, closeModal, showToast } from './ui-helpers.js?v12';
+} from './utils.js?v15';
+import { openModal, closeModal, showToast } from './ui-helpers.js?v15';
 
 let records = [];        // TODOS los registros del usuario (una sola carga por sesión)
 let uid = null;
@@ -112,11 +112,11 @@ export async function renderControlGeneral(navigate) {
 }
 
 // ----------------------------------------------------------------------------
-// Selección de mes (agosto 2026 → diciembre 2027)
+// Selección de mes (enero 2026 → diciembre 2028)
 // ----------------------------------------------------------------------------
 function paintMonthSelect() {
   const container = document.getElementById('cg-container');
-  const months = getAvailableMonths();
+  const months = getAvailableMonths(2026, 1, 2028, 12);
   const now = getGuatemalaParts();
 
   container.innerHTML = `
@@ -214,7 +214,7 @@ function paintMonthTable() {
             <th class="col-desc">Paciente</th><th class="col-desc">Descripción</th><th>Unidades</th>
             <th>Costo C/U</th><th>Color</th><th class="col-desc">Etapa</th><th class="col-desc">Corr/Rep</th>
             <th class="col-desc">Destino</th><th>F. Requerida</th><th>F. Salida</th><th>Tiempo</th>
-            <th>Total</th><th>Abono Acum.</th><th class="col-desc">Observaciones</th><th>Fecha 1</th><th>Abono</th><th>Fecha 2</th><th>Abono</th><th>Fecha 3</th><th>Abono</th><th>Saldo</th><th>Status</th><th></th>
+            <th>Total</th><th>Abono Acum.</th><th>Fecha 1</th><th>Abono</th><th>Fecha 2</th><th>Abono</th><th>Fecha 3</th><th>Abono</th><th>Saldo</th><th>Status</th><th class="col-desc">Observaciones</th><th></th>
           </tr>
         </thead>
         <tbody id="cg-tbody"></tbody>
@@ -289,7 +289,6 @@ function rowHtml(rec, statuses, idx) {
       <td class="cell-total mono">${tiempo === '' ? '—' : tiempo}</td>
       <td class="cell-total mono">Q${total.toFixed(2)}</td>
       <td class="cell-total mono">Q${abonoAcum.toFixed(2)}</td>
-      <td class="col-desc"><input type="text" class="cell-text" data-f="observaciones" value="${escapeHtml(rec.observaciones || '')}" style="min-width:150px;"></td>
       <td><input type="date" class="cell-text" data-f="fecha1" value="${escapeHtml(rec.fecha1 || '')}"></td>
       <td><input type="number" step="0.01" class="cell-text" data-f="abono1" value="${rec.abono1 !== '' && rec.abono1 != null ? rec.abono1 : ''}" style="min-width:80px;"></td>
       <td><input type="date" class="cell-text" data-f="fecha2" value="${escapeHtml(rec.fecha2 || '')}"></td>
@@ -303,6 +302,7 @@ function rowHtml(rec, statuses, idx) {
           ${statuses.map(s => `<option value="${escapeHtml(s)}" ${rec.status === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
         </select>
       </td>
+      <td class="col-desc"><input type="text" class="cell-text" data-f="observaciones" value="${escapeHtml(rec.observaciones || '')}" style="min-width:150px;"></td>
       <td class="row-actions-col">
         <button class="row-agregar-btn" data-agregar="${rec.id}" title="Agregar a una agenda">→</button>
         <button class="row-delete-btn" data-delrec="${rec.id}" title="Eliminar registro">✕</button>
@@ -313,19 +313,25 @@ function rowHtml(rec, statuses, idx) {
 
 function wireRowEvents() {
   const tbody = document.getElementById('cg-tbody');
-  if (!tbody) return;
+  if (!tbody || tbody.dataset.delegated === '1') return;
+  tbody.dataset.delegated = '1';
 
-  tbody.querySelectorAll('[data-f]').forEach(input => {
-    input.addEventListener('input', onFieldChange);
-    input.addEventListener('change', onFieldChange);
+  tbody.addEventListener('input', (e) => {
+    const input = e.target.closest('[data-f]');
+    if (!input) return;
+    onFieldChange(e);
+  });
+  tbody.addEventListener('change', (e) => {
+    const input = e.target.closest('[data-f]');
+    if (!input) return;
+    onFieldChange(e);
   });
 
-  tbody.querySelectorAll('[data-agregar]').forEach(btn => {
-    btn.addEventListener('click', () => openAgregarModal(btn.dataset.agregar));
-  });
-
-  tbody.querySelectorAll('[data-delrec]').forEach(btn => {
-    btn.addEventListener('click', () => deleteRecord(btn.dataset.delrec));
+  tbody.addEventListener('click', (e) => {
+    const agregarBtn = e.target.closest('[data-agregar]');
+    if (agregarBtn) { openAgregarModal(agregarBtn.dataset.agregar); return; }
+    const delBtn = e.target.closest('[data-delrec]');
+    if (delBtn) { deleteRecord(delBtn.dataset.delrec); return; }
   });
 }
 

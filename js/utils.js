@@ -88,11 +88,11 @@ export function getMonthMeta(year, month /* 1-12 */) {
   return { firstWeekday, daysInMonth };
 }
 
-/** Lista de meses disponibles en el módulo Calendario: agosto 2026 → diciembre 2027. */
-export function getAvailableMonths() {
+/** Lista de meses disponibles en un rango dado. Por defecto (sin argumentos), agosto 2026 → diciembre 2027 — el rango original del módulo Calendario. */
+export function getAvailableMonths(startYear = 2026, startMonth = 8, endYear = 2027, endMonth = 12) {
   const months = [];
-  let y = 2026, m = 8;
-  while (y < 2027 || (y === 2027 && m <= 12)) {
+  let y = startYear, m = startMonth;
+  while (y < endYear || (y === endYear && m <= endMonth)) {
     months.push({ year: y, month: m, key: `${y}-${String(m).padStart(2, '0')}` });
     m++;
     if (m > 12) { m = 1; y++; }
