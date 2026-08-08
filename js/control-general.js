@@ -6,20 +6,20 @@
 // alimentar sus listas desplegables.
 // ============================================================================
 
-import { getCurrentUser } from './auth.js?v18';
+import { getCurrentUser } from './auth.js?v23';
 import {
   listControlGeneral, saveControlGeneralRecord, deleteControlGeneralRecord,
   getAgendaDay, autosaveAgendaDay
-} from './data-store.js?v18';
-import { getAgendaConfig, defaultRow } from './agenda-configs.js?v18';
-import { ensureCatalogsLoaded, getCatalogItems } from './datos.js?v18';
-import { UNIDADES_1_32 } from './datos-seed.js?v18';
+} from './data-store.js?v23';
+import { getAgendaConfig, defaultRow } from './agenda-configs.js?v23';
+import { ensureCatalogsLoaded, getCatalogItems } from './datos.js?v23';
+import { UNIDADES_1_32 } from './datos-seed.js?v23';
 import {
   escapeHtml, debounce, toNumber, round2, generateId, dateKeyToday,
   getAvailableMonths, MESES_ES, capitalize, getGuatemalaParts,
   fetchWithRetry, describeFirestoreError
-} from './utils.js?v18';
-import { openModal, closeModal, showToast } from './ui-helpers.js?v18';
+} from './utils.js?v23';
+import { openModal, closeModal, showToast } from './ui-helpers.js?v23';
 
 let records = [];        // TODOS los registros del usuario (una sola carga por sesión)
 let uid = null;

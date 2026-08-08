@@ -27,9 +27,9 @@
 // ============================================================================
 
 import {
-  doc, getDoc, setDoc, deleteDoc, collection, query, where, getDocs, serverTimestamp
+  doc, getDoc, getDocFromServer, setDoc, deleteDoc, collection, query, where, getDocs, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
-import { db } from './firebase-config.js?v18';
+import { db } from './firebase-config.js?v23';
 
 function agendaConfigRef(uid, agendaId) {
   return doc(db, 'users', uid, 'agendaConfigs', agendaId);
@@ -50,9 +50,15 @@ function datosCatalogsRef(uid) {
   return doc(db, 'users', uid, 'datosCatalog', 'all');
 }
 
-/** Columnas agregadas dinámicamente (persisten para todos los días futuros de esa agenda). */
+/** Columnas agregadas dinámicamente (persisten para todos los días futuros de esa agenda). Intenta siempre leer del servidor (sin caché); si esa lectura falla por cualquier motivo, cae a una lectura normal en vez de reportar "no hay datos". */
 export async function getAgendaExtraColumns(uid, agendaId) {
-  const snap = await getDoc(agendaConfigRef(uid, agendaId));
+  const ref = agendaConfigRef(uid, agendaId);
+  let snap;
+  try {
+    snap = await getDocFromServer(ref);
+  } catch (e) {
+    snap = await getDoc(ref);
+  }
   return snap.exists() ? (snap.data().extraColumns || []) : [];
 }
 
@@ -60,9 +66,15 @@ export async function saveAgendaExtraColumns(uid, agendaId, extraColumns) {
   await setDoc(agendaConfigRef(uid, agendaId), { extraColumns, updatedAt: serverTimestamp() }, { merge: true });
 }
 
-/** Agenda de un día específico (null si todavía no existe → se crea vacía en memoria). */
+/** Agenda de un día específico (null si todavía no existe → se crea vacía en memoria). Intenta siempre leer del servidor (sin caché); si esa lectura falla por cualquier motivo, cae a una lectura normal en vez de reportar "no hay datos" cuando en realidad sí los hay. */
 export async function getAgendaDay(uid, agendaId, dateKey) {
-  const snap = await getDoc(agendaDayRef(uid, agendaId, dateKey));
+  const ref = agendaDayRef(uid, agendaId, dateKey);
+  let snap;
+  try {
+    snap = await getDocFromServer(ref);
+  } catch (e) {
+    snap = await getDoc(ref);
+  }
   return snap.exists() ? snap.data() : null;
 }
 

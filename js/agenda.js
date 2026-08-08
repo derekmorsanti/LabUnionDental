@@ -36,18 +36,42 @@
 import {
   getAgendaConfig, getAllPointColumns, computeRowTotal, computeGrandTotal,
   computeColumnSum, defaultRow, cellUnits, FALLBACK_POINT_VALUE
-} from './agenda-configs.js?v18';
-import { getCurrentUser } from './auth.js?v18';
+} from './agenda-configs.js?v23';
+import { getCurrentUser } from './auth.js?v23';
 import {
   getAgendaDay, autosaveAgendaDay, saveAgendaDay,
   getAgendaExtraColumns, saveAgendaExtraColumns
-} from './data-store.js?v18';
+} from './data-store.js?v23';
 import {
   dateKeyToday, formatAgendaHeaderDate, debounce, escapeHtml, toNumber, generateId, round2,
   fetchWithRetry, describeFirestoreError
-} from './utils.js?v18';
-import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v18';
-import { captureElementToImage } from './export.js?v18';
+} from './utils.js?v23';
+import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v23';
+import { captureElementToImage } from './export.js?v23';
+
+// ----------------------------------------------------------------------------
+// Primera vez vs. ya conocida: mientras nunca se haya confirmado (guardado o
+// leído con éxito) que una agenda tiene datos en Firestore, se evita el
+// viaje de red al abrirla y se pinta vacía de inmediato. En cuanto hay una
+// lectura real exitosa o un guardado, queda marcada localmente y a partir
+// de ahí siempre se sincroniza normalmente contra el servidor.
+// ----------------------------------------------------------------------------
+const AGENDA_SEEN_PREFIX = 'lud_agenda_seen_';
+const agendaSyncedMemory = new Set();
+
+function agendaSeenKey(storageAgendaId) {
+  return `${AGENDA_SEEN_PREFIX}${storageAgendaId}`;
+}
+function hasAgendaEverSynced(storageAgendaId) {
+  if (agendaSyncedMemory.has(storageAgendaId)) return true;
+  try { return localStorage.getItem(agendaSeenKey(storageAgendaId)) === '1'; }
+  catch (_) { return false; }
+}
+function markAgendaAsSynced(storageAgendaId) {
+  agendaSyncedMemory.add(storageAgendaId);
+  try { localStorage.setItem(agendaSeenKey(storageAgendaId), '1'); }
+  catch (_) { /* localStorage no disponible (modo privado, cuota, etc.) — no es crítico */ }
+}
 
 // ----------------------------------------------------------------------------
 // Botón "AGREGAR" por fila: crea una fila nueva en OTRA agenda (Yesos,
@@ -243,13 +267,18 @@ async function loadInstance(config, agendaId, uid, baseDateKey, inst) {
   if (subtitleEl) subtitleEl.textContent = 'Cargando…';
   hideLoadWarning(key);
 
+  const isFirstVisit = !hasAgendaEverSynced(storageAgendaId);
+
   let existing = null;
   let loadError = null;
-  try {
-    existing = await fetchWithRetry(() => getAgendaDay(uid, agendaId, dateKey), { label: 'cargar agenda' });
-  } catch (e) {
-    loadError = e;
-    console.error(`Error al cargar agenda (${agendaId}${suf(key)}):`, e);
+  if (!isFirstVisit) {
+    try {
+      existing = await fetchWithRetry(() => getAgendaDay(uid, agendaId, dateKey), { retries: 2, delayMs: 700, label: 'cargar agenda' });
+      markAgendaAsSynced(storageAgendaId);
+    } catch (e) {
+      loadError = e;
+      console.error(`Error al cargar agenda (${agendaId}${suf(key)}):`, e);
+    }
   }
 
   // Si mientras esto cargaba el usuario ya navegó a otra agenda, o se
@@ -265,7 +294,7 @@ async function loadInstance(config, agendaId, uid, baseDateKey, inst) {
     redColumns = existing.redColumns || {};
   } else {
     extraColumns = [];
-    if (!loadError) {
+    if (!isFirstVisit && !loadError) {
       try {
         extraColumns = await fetchWithRetry(() => getAgendaExtraColumns(uid, storageAgendaId), { label: 'columnas' });
       } catch (e) {
@@ -314,7 +343,70 @@ async function loadInstance(config, agendaId, uid, baseDateKey, inst) {
     const msg = `No se pudieron cargar los datos guardados de esta agenda — esto NO significa que se hayan borrado. ${describeFirestoreError(loadError)}`;
     showToast(msg, true);
     showLoadWarning(msg, key);
+
+    // Justo después de F5, el canal de Firestore a veces todavía no
+    // terminó de abrirse (falso "offline" transitorio) — se reintenta
+    // solo, en segundo plano, antes de dejarle al usuario únicamente el
+    // botón manual de "Reintentar".
+    setTimeout(async () => {
+      const recovered = await reconcileAgendaWithServer(
+        agendaId, uid, dateKey, storageAgendaId, key, myToken,
+        { retries: 2, delayMs: 800, label: 'reintento automático' }
+      );
+      if (recovered && instTokens[key] === myToken) hideLoadWarning(key);
+    }, 1500);
   }
+
+  // En una primera visita se pintó la agenda vacía sin tocar Firestore. Se
+  // dispara ahora, en segundo plano y SIN bloquear ni retrasar lo que el
+  // usuario ya está viendo, una verificación real contra el servidor: si
+  // por cualquier motivo ya existían datos guardados (bandera local
+  // perdida, otro dispositivo, etc.), se recuperan y se pintan solos, sin
+  // pisar nada que el usuario ya haya empezado a escribir mientras tanto.
+  if (isFirstVisit) {
+    reconcileAgendaWithServer(agendaId, uid, dateKey, storageAgendaId, key, myToken, { retries: 1, delayMs: 600, label: 'verificación' });
+  }
+}
+
+/**
+ * Vuelve a consultar el documento real de la agenda en el servidor y, si
+ * encuentra datos guardados que el panel en pantalla todavía no tiene (y el
+ * usuario no ha escrito nada localmente todavía, para no pisar su trabajo
+ * en curso), los aplica y repinta. Se usa tanto para la verificación
+ * silenciosa de "primera visita" como para el reintento automático tras un
+ * error de carga. Devuelve true si terminó sin error (haya encontrado
+ * datos o no), false si la consulta en sí falló.
+ */
+async function reconcileAgendaWithServer(agendaId, uid, dateKey, storageAgendaId, key, myToken, opts = {}) {
+  let existing = null;
+  try {
+    existing = await fetchWithRetry(
+      () => getAgendaDay(uid, agendaId, dateKey),
+      { retries: opts.retries != null ? opts.retries : 1, delayMs: opts.delayMs != null ? opts.delayMs : 700, label: opts.label || 'verificación' }
+    );
+  } catch (e) {
+    return false;
+  }
+
+  if (instTokens[key] !== myToken) return true;
+
+  markAgendaAsSynced(storageAgendaId);
+  if (!existing) return true;
+
+  const state = panels[key];
+  if (!state) return true;
+
+  const hasLocalEdits = state.rows.some(r => Object.values(r.cells || {}).some(v => v !== '' && v !== undefined && v !== null));
+  if (hasLocalEdits) return true;
+
+  state.rows = (existing.rows && existing.rows.length) ? existing.rows : state.rows;
+  state.extraColumns = existing.extraColumns || state.extraColumns;
+  state.meta = existing.meta || state.meta;
+  state.redColumns = existing.redColumns || state.redColumns;
+  state.rows.forEach(r => { if (r.rowColor === undefined) r.rowColor = null; });
+
+  renderTable(key);
+  return true;
 }
 
 // ----------------------------------------------------------------------------
@@ -690,6 +782,7 @@ async function addRowToOtherAgenda(uid, targetAgendaId, values) {
     () => autosaveAgendaDay(uid, targetAgendaId, dateKey, { rows, extraColumns, meta }),
     { retries: 1, label: 'agregar fila' }
   );
+  markAgendaAsSynced(targetConfig.splitAmPm ? `${targetAgendaId}-am` : targetAgendaId);
 }
 
 // ----------------------------------------------------------------------------
@@ -707,6 +800,7 @@ function wireToolbar(key) {
         await fetchWithRetry(() => saveAgendaDay(state.uid, state.agendaId, state.dateKey, {
           rows: state.rows, extraColumns: state.extraColumns, meta: state.meta, redColumns: state.redColumns
         }), { label: 'guardar agenda' });
+        markAgendaAsSynced(state.storageAgendaId);
         setSaveStatus(key, 'Guardado ✓', 'saved');
         showToast(state.label ? `Agenda (${state.label}) guardada en el historial` : 'Agenda guardada en el historial');
       } catch (e) {
@@ -853,6 +947,7 @@ function getAutosaveFn(key) {
         await fetchWithRetry(() => autosaveAgendaDay(state.uid, state.agendaId, state.dateKey, {
           rows: state.rows, extraColumns: state.extraColumns, meta: state.meta, redColumns: state.redColumns
         }), { retries: 1, label: 'autoguardado' });
+        markAgendaAsSynced(state.storageAgendaId);
         setSaveStatus(key, 'Guardado automáticamente', 'saved');
       } catch (e) {
         console.error(`Error en autoguardado (${state.agendaId}${suf(key)}):`, e);
