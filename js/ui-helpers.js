@@ -1,7 +1,3 @@
-// ============================================================================
-// ui-helpers.js — modal genérico + toast, compartidos por varios módulos.
-// ============================================================================
-
 export function openModal(innerHtml) {
   const overlay = document.getElementById('modal-overlay');
   const box = document.getElementById('modal-box');

@@ -1,45 +1,7 @@
-// ============================================================================
-// agenda-configs.js
-// ----------------------------------------------------------------------------
-// Definicion exacta de las 5 agendas, tomada de las hojas de referencia.
-// Este es el unico lugar donde viven las columnas y los pesos de puntos —
-// cualquier ajuste futuro a un peso o nombre de columna se hace aqui.
-//
-// SUPUESTOS DE DISEÑO (no estaban escritos en el documento de texto, se
-// dedujeron de las imagenes de referencia — ver README.md "Decisiones de
-// diseño" para el detalle completo):
-//   • La columna EXTRA de Abner y Dina no trae un peso propio en el
-//     encabezado, asi que usa la regla de respaldo del documento original:
-//     1 punto = 0.75.
-//   • La columna EXTRA de Eliu SI tiene una formula real visible en la
-//     imagen de referencia (multiplica por UNIDAD en vez de un peso fijo),
-//     asi que se reproduce exactamente: EXTRA x UNIDAD.
-//   • Toda columna nueva agregada con el boton (+) usa tambien el
-//     respaldo de 1 punto = 0.75, en cualquiera de las 3 agendas con
-//     puntos.
-//   • DIFERENCIA (Cony y Astryd) = TOTAL - META, donde META es una meta
-//     diaria editable por el usuario (el documento de texto no la definia;
-//     solo aparecia como un numero ya calculado en la imagen).
-// ============================================================================
-
-/**
- * kind de columna:
- *   'text'             → columna de identidad/registro (texto o numero libre,
- *                         sin clic-para-marcar). numeric:true + summedInFooter:true
- *                         hace que se sume en la fila Total.
- *   'point'             → columna de puntos: clic = X = 1xpeso, doble clic = numero x peso
- *   'point-extra-eliu'  → caso especial de Eliu: EXTRA x UNIDAD
- */
-
 export const AGENDAS = [
   {
     id: 'cony', personName: 'Cony', processName: 'Yesos',
     hasPoints: false,
-    // La agenda de Cony se divide en dos tandas independientes (mañana y
-    // tarde). agenda.js usa esta bandera para renderizar dos tablas en vez
-    // de una sola; cada tabla guarda sus propios datos en Firestore bajo
-    // una dateKey con sufijo "-AM" / "-PM" (ver agenda.js, sección
-    // "Instancias AM/PM").
     splitAmPm: true,
     leadingColumns: [
       { id: 'doctor', label: 'DOCTOR/PX', kind: 'text' },
@@ -123,26 +85,18 @@ export const AGENDAS = [
   }
 ];
 
-/** Valor de respaldo cuando una columna de puntos no trae peso propio (nuevas columnas, EXTRA sin peso). */
 export const FALLBACK_POINT_VALUE = 0.75;
 
 export function getAgendaConfig(id) {
   return AGENDAS.find(a => a.id === id) || null;
 }
 
-/**
- * Convierte el valor crudo de una casilla de produccion a "unidades":
- *   "X"      → 1
- *   numero N → N
- *   vacio    → 0
- */
 export function cellUnits(rawValue) {
   if (rawValue === 'X') return 1;
   const n = parseFloat(rawValue);
   return isNaN(n) ? 0 : n;
 }
 
-/** Columnas de puntos fijas de una agenda (columnas base + EXTRA si tiene), sin incluir las dinamicas. */
 export function getBasePointColumns(config) {
   if (!config.hasPoints) return [];
   const cols = [...config.pointColumns];
@@ -150,7 +104,6 @@ export function getBasePointColumns(config) {
   return cols;
 }
 
-/** Todas las columnas de puntos de una agenda, incluyendo las agregadas dinamicamente con (+). */
 export function getAllPointColumns(config, dynamicColumns) {
   return [...getBasePointColumns(config), ...(dynamicColumns || []).map(c => ({ ...c, kind: c.kind || 'point' }))];
 }
@@ -160,7 +113,6 @@ function toNum(v) {
   return isNaN(n) ? 0 : n;
 }
 
-/** TOTAL PTS (o PUNTOS OBTENIDOS) de una fila. Reproduce la formula exacta de Eliu para su columna EXTRA. */
 export function computeRowTotal(config, row, dynamicColumns) {
   if (!config.hasPoints || !row || !row.cells) return 0;
   const cols = getAllPointColumns(config, dynamicColumns);
@@ -177,12 +129,10 @@ export function computeRowTotal(config, row, dynamicColumns) {
   return total;
 }
 
-/** Suma de TOTAL PTS de todas las filas (para la insignia de puntos y el pie de la tabla). */
 export function computeGrandTotal(config, rows, dynamicColumns) {
   return (rows || []).reduce((sum, r) => sum + computeRowTotal(config, r, dynamicColumns), 0);
 }
 
-/** Suma de una columna de texto numerico (UNIDAD, CANT., UNID.) a traves de todas las filas, para la fila Total. */
 export function computeColumnSum(rows, colId) {
   return (rows || []).reduce((sum, r) => sum + toNum(r.cells ? r.cells[colId] : 0), 0);
 }

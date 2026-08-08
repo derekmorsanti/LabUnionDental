@@ -1,7 +1,3 @@
-// ============================================================================
-// dashboard.js — saludo dinámico + fecha (hora de Guatemala) + tarjetas.
-// ============================================================================
-
 import { AGENDAS } from './agenda-configs.js?v23';
 import { getGuatemalaParts, getGreeting, formatDMY, escapeHtml } from './utils.js?v23';
 

@@ -1,11 +1,3 @@
-// ============================================================================
-// control-general.js — módulo de gestión de registros/casos, organizado por
-// MES (agosto 2026 → diciembre 2027). Un documento por registro en Firestore
-// (users/{uid}/controlGeneral/{id}), con un campo `monthKey` ("AAAA-MM") que
-// indica a qué mes pertenece la fila. Usa los catálogos de Datos para
-// alimentar sus listas desplegables.
-// ============================================================================
-
 import { getCurrentUser } from './auth.js?v23';
 import {
   listControlGeneral, saveControlGeneralRecord, deleteControlGeneralRecord,
@@ -21,17 +13,16 @@ import {
 } from './utils.js?v23';
 import { openModal, closeModal, showToast } from './ui-helpers.js?v23';
 
-let records = [];        // TODOS los registros del usuario (una sola carga por sesión)
+let records = [];
 let uid = null;
 let loaded = false;
 let loadingPromise = null;
 let searchText = '';
-let currentMonthKey = null; // null = pantalla de selección de mes
+let currentMonthKey = null;
 const autosaveFns = {};
 let resumenVisible = false;
 let selectedDoctor = null;
 
-// Fila → agenda destino: doctor/px, descripción y cantidad se copian tal cual.
 const AGREGAR_TARGETS = [
   { label: 'Metales', agendaId: 'abner' },
   { label: 'Pretallado', agendaId: 'eliu' },
@@ -80,7 +71,6 @@ function computeTiempo(rec) {
   return Math.round((b - a) / 86400000);
 }
 
-// ----------------------------------------------------------------------------
 async function loadRecordsOnce() {
   if (loaded) return records;
   if (loadingPromise) return loadingPromise;
@@ -103,9 +93,6 @@ export async function renderControlGeneral(navigate) {
   currentMonthKey = null;
   paintMonthSelect();
 
-  // Catálogos y registros se cargan en segundo plano (no bloquean la
-  // pantalla de selección de mes) y se reutilizan sin volver a pedirlos a
-  // Firebase mientras dure la sesión.
   ensureCatalogsLoaded(uid).catch(() => {});
   loadRecordsOnce().catch(e => {
     console.error('Error al cargar Control General:', e);
@@ -113,9 +100,6 @@ export async function renderControlGeneral(navigate) {
   });
 }
 
-// ----------------------------------------------------------------------------
-// Selección de mes (enero 2026 → diciembre 2028)
-// ----------------------------------------------------------------------------
 function paintMonthSelect() {
   const container = document.getElementById('cg-container');
   const months = getAvailableMonths(2026, 1, 2028, 12);
@@ -159,9 +143,6 @@ function showMonthLoading() {
   container.appendChild(loadingEl);
 }
 
-// ----------------------------------------------------------------------------
-// Tabla del mes seleccionado
-// ----------------------------------------------------------------------------
 function monthRecords() {
   return records.filter(r => r.monthKey === currentMonthKey);
 }
@@ -368,9 +349,6 @@ function refreshRowTotalsOnly(tr, rec) {
   tr.classList.toggle('cg-row-cancelado', (rec.status || '').toUpperCase() === 'CANCELADO');
 }
 
-// ----------------------------------------------------------------------------
-// "+ Agregar fila" — reemplaza al antiguo "Nuevo registro"
-// ----------------------------------------------------------------------------
 function setSaveStatus(text, cls) {
   const el = document.getElementById('cg-save-status');
   if (!el) return;
@@ -429,10 +407,6 @@ function scheduleAutosave(rec) {
   autosaveFns[rec.id]();
 }
 
-// ----------------------------------------------------------------------------
-// Botón "AGREGAR" por fila → crear fila en la agenda del día correspondiente,
-// en la misma posición lógica (índice) dentro de esa agenda.
-// ----------------------------------------------------------------------------
 function openAgregarModal(recId) {
   const rec = records.find(r => r.id === recId);
   if (!rec) return;
@@ -488,12 +462,6 @@ async function addRowToAgenda(targetAgendaId, rec, position) {
   );
 }
 
-// ----------------------------------------------------------------------------
-// RESUMEN POR DOCTOR + ESTADO DE CUENTA
-// Reutiliza `records` (ya cargados en memoria por loadRecordsOnce) y las
-// funciones de cálculo existentes (computeTotal/computeAbonoAcumulado/
-// computeSaldo). No vuelve a pedir nada a Firestore.
-// ----------------------------------------------------------------------------
 function toggleResumenDoctores() {
   resumenVisible = !resumenVisible;
   const btn = document.getElementById('cg-resumen-btn');

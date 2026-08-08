@@ -1,11 +1,3 @@
-// ============================================================================
-// auth.js
-// ----------------------------------------------------------------------------
-// Todo lo relacionado con Firebase Authentication: registro, inicio de
-// sesión (con "Recordarme"), cierre de sesión y el listener de estado de
-// sesión que usa main.js para decidir qué vista mostrar.
-// ============================================================================
-
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -22,7 +14,6 @@ import {
 import { auth, db } from './firebase-config.js?v23';
 import { withTimeout } from './utils.js?v23';
 
-/** Traduce los códigos de error de Firebase a mensajes en español. */
 export function friendlyAuthError(error) {
   const code = error && error.code ? error.code : '';
   const map = {
@@ -39,7 +30,6 @@ export function friendlyAuthError(error) {
   return map[code] || `Ocurrió un error. Intenta de nuevo. (${code || 'desconocido'})`;
 }
 
-/** Registra un usuario nuevo: crea la cuenta en Auth y su perfil en Firestore. */
 export async function registerUser(name, email, password) {
   const cred = await withTimeout(
     createUserWithEmailAndPassword(auth, email, password), 12000, 'El registro tardó demasiado. Intenta de nuevo.'
@@ -51,7 +41,6 @@ export async function registerUser(name, email, password) {
   return cred.user;
 }
 
-/** Inicia sesión. `remember` controla si la sesión sobrevive el cierre del navegador. */
 export async function loginUser(email, password, remember) {
   await withTimeout(
     setPersistence(auth, remember ? browserLocalPersistence : browserSessionPersistence), 8000
@@ -66,7 +55,6 @@ export async function logoutUser() {
   await signOut(auth);
 }
 
-/** Suscribe un callback a los cambios de estado de sesión. Devuelve la función para desuscribirse. */
 export function onAuthChange(callback) {
   return onAuthStateChanged(auth, callback);
 }
@@ -75,14 +63,12 @@ export function getCurrentUser() {
   return auth.currentUser;
 }
 
-/** Obtiene el nombre de perfil guardado en Firestore (con respaldo al displayName de Auth). Nunca cuelga: si tarda, cae al respaldo. */
 export async function getUserProfileName(uid) {
   try {
     const snap = await getDoc(doc(db, 'users', uid));
     return snap.exists() ? snap.data().name || '' : '';
   } catch (err) {
     if (err.code === 'unavailable') {
-      // esperar y reintentar una vez
       await new Promise(r => setTimeout(r, 1000));
       const snap = await getDoc(doc(db, 'users', uid));
       return snap.exists() ? snap.data().name || '' : '';

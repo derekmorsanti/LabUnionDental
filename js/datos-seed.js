@@ -1,14 +1,3 @@
-// ============================================================================
-// datos-seed.js
-// ----------------------------------------------------------------------------
-// Valores iniciales de cada catálogo de la sección "Datos", transcritos de
-// las hojas de referencia enviadas (pestaña "DATOS" de Control General -
-// Casos 2026). Estos valores se guardan en Firestore SOLO la primera vez
-// que un usuario abre "Datos" y ese catálogo todavía no existe — a partir
-// de ahí el usuario controla la lista por completo (agregar/eliminar) desde
-// la propia pantalla de Datos, sin que este archivo la vuelva a sobreescribir.
-// ============================================================================
-
 export const SEED_DOCTORES = [
 "ABNER GARCÍA","ABRAHAM ESPAÑA","ADRIANA BARRIOS","ALAN AYALA","ALBERTO SILVA","ALDO LOPEZ",
 "ALEJANDRA ALVAREZ","ALEJANDRA CELADA","ALEJANDRA COJULUM","ALEJANDRA LOPEZ","ALEJANDRA MOSCOSO",
@@ -144,7 +133,6 @@ export const SEED_CORRECCION = [
 "NO ADAPTA","NUEVOS CORTES","SE FRACTURO","SE QUEBRO PORCELANA","VOLVER A VIDRIAR"
 ];
 
-/** Definición de cada catálogo: id de almacenamiento, etiqueta visible y semilla inicial. */
 export const DATOS_CATALOGS = [
   { id: 'doctores',   label: 'Doctores',              seed: SEED_DOCTORES,   numeric: false },
   { id: 'etapas',      label: 'Etapas',                 seed: SEED_ETAPAS,     numeric: false },
@@ -154,5 +142,4 @@ export const DATOS_CATALOGS = [
   { id: 'correccion',  label: 'Corrección / Repetición', seed: SEED_CORRECCION, numeric: false }
 ];
 
-/** Unidades: lista fija de 1 a 32, tal como en las hojas de referencia. */
 export const UNIDADES_1_32 = Array.from({ length: 32 }, (_, i) => i + 1);

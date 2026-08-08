@@ -1,38 +1,3 @@
-// ============================================================================
-// agenda.js — la hoja tipo Excel de cada agenda: render, interacción de
-// casillas (clic = X, doble clic = número), cálculo de puntos en tiempo
-// real, columnas dinámicas, filas, guardado y descarga.
-//
-// ----------------------------------------------------------------------------
-// INSTANCIAS AM/PM
-// ----------------------------------------------------------------------------
-// La mayoría de agendas (Eliu, Abner, Dina, Astryd) se renderizan como una
-// sola "instancia" — igual que antes. La agenda de Cony (config.splitAmPm)
-// se renderiza como DOS instancias independientes, 'am' y 'pm', una junto a
-// la otra (ver .agenda-split-grid en css/styles.css).
-//
-// Cada instancia tiene:
-//   - su propio estado en memoria (panels[key])
-//   - sus propios elementos del DOM, generados dinámicamente con ids
-//     sufijados ("-am" / "-pm"); las agendas sin split usan key='' y por
-//     lo tanto los MISMOS ids que existían antes (agenda-table,
-//     agenda-thead, btn-save-agenda, etc.), así que su comportamiento no
-//     cambió en absoluto.
-//   - su propio documento en Firestore: se reutiliza EXACTAMENTE la misma
-//     colección/estructura de siempre (users/{uid}/agendas/{agendaId}_{dateKey}),
-//     sólo que para Cony la dateKey lleva un sufijo "-AM" / "-PM"
-//     (p. ej. "2026-08-01-AM" y "2026-08-01-PM"). El campo agendaId
-//     guardado dentro del documento sigue siendo 'cony' en ambos casos,
-//     así que Historial sigue encontrando y listando las dos tandas de
-//     cada día sin ningún cambio en data-store.js.
-//   - sus propias columnas dinámicas (+/-): se guardan bajo un id de
-//     almacenamiento propio ('cony-am' / 'cony-pm') en la colección
-//     agendaConfigs, para que agregar una columna en AM no la agregue
-//     también en PM.
-//   - su propio debounce de autoguardado, para que escribir en una tabla
-//     nunca dispare ni interfiera con el guardado de la otra.
-// ============================================================================
-
 import {
   getAgendaConfig, getAllPointColumns, computeRowTotal, computeGrandTotal,
   computeColumnSum, defaultRow, cellUnits, FALLBACK_POINT_VALUE
@@ -49,13 +14,6 @@ import {
 import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v23';
 import { captureElementToImage } from './export.js?v23';
 
-// ----------------------------------------------------------------------------
-// Primera vez vs. ya conocida: mientras nunca se haya confirmado (guardado o
-// leído con éxito) que una agenda tiene datos en Firestore, se evita el
-// viaje de red al abrirla y se pinta vacía de inmediato. En cuanto hay una
-// lectura real exitosa o un guardado, queda marcada localmente y a partir
-// de ahí siempre se sincroniza normalmente contra el servidor.
-// ----------------------------------------------------------------------------
 const AGENDA_SEEN_PREFIX = 'lud_agenda_seen_';
 const agendaSyncedMemory = new Set();
 
@@ -70,16 +28,9 @@ function hasAgendaEverSynced(storageAgendaId) {
 function markAgendaAsSynced(storageAgendaId) {
   agendaSyncedMemory.add(storageAgendaId);
   try { localStorage.setItem(agendaSeenKey(storageAgendaId), '1'); }
-  catch (_) { /* localStorage no disponible (modo privado, cuota, etc.) — no es crítico */ }
+  catch (_) {  }
 }
 
-// ----------------------------------------------------------------------------
-// Botón "AGREGAR" por fila: crea una fila nueva en OTRA agenda (Yesos,
-// Metales, Tallado, Encerado o Pretallado), copiando SOLO doctor/paciente,
-// descripción y unidad. No requiere que la agenda destino esté abierta —
-// escribe directamente en su documento del día en Firestore, reutilizando
-// exactamente el mismo esquema que usa el resto de la app.
-// ----------------------------------------------------------------------------
 const AGREGAR_TARGETS = [
   { label: 'Yesos', agendaId: 'cony' },
   { label: 'Encerado', agendaId: 'dina' },
@@ -90,10 +41,6 @@ const AGREGAR_TARGETS = [
 
 const DEFAULT_ROW_COUNT = 12;
 
-// Paleta de colores disponibles para pintar el texto de una fila completa
-// (5 colores, sin negro/por-defecto). Flujo: clic en una fila para
-// seleccionarla (se resalta) → clic en un color → el texto de TODA esa
-// fila cambia de inmediato a ese color y se guarda en row.rowColor.
 const CELL_COLORS = [
   { key: 'red', label: 'Rojo', hex: '#dc2626' },
   { key: 'blue', label: 'Azul', hex: '#2563eb' },
@@ -103,17 +50,8 @@ const CELL_COLORS = [
 ];
 const RED_COLUMN_HEX = '#dc2626';
 
-// Estado de cada instancia visible actualmente, indexado por key ('' cuando
-// la agenda no está dividida; 'am' / 'pm' cuando sí lo está).
 let panels = {};
-// Contador de "token" de carga POR instancia — evita que una respuesta
-// tardía de red (p. ej. al reintentar tras un error, o si el usuario
-// navega rápido entre agendas) sobrescriba datos más nuevos ya en
-// pantalla. Cada instancia tiene su propio contador para que un
-// reintento en AM nunca invalide lo que ya está cargado en PM.
 let instTokens = {};
-// Funciones de autoguardado (debounced), una por instancia — así el
-// guardado automático de AM y PM nunca comparten temporizador.
 let autosaveFns = {};
 
 function nextToken(key) {
@@ -121,7 +59,6 @@ function nextToken(key) {
   return instTokens[key];
 }
 
-/** Definición de instancias a renderizar según la config de la agenda. */
 function getInstances(config) {
   if (config.splitAmPm) {
     return [
@@ -132,11 +69,8 @@ function getInstances(config) {
   return [{ key: '', label: '' }];
 }
 
-/** Sufijo de id para una key de instancia ('' → sin sufijo, igual que antes). */
 function suf(key) { return key ? `-${key}` : ''; }
-/** Construye el id completo de un elemento para una instancia dada. */
 function eid(base, key) { return `${base}${suf(key)}`; }
-/** getElementById ya resuelto contra la instancia. */
 function g(base, key) { return document.getElementById(eid(base, key)); }
 
 function showLoadWarning(message, key) {
@@ -163,9 +97,6 @@ function hideLoadWarning(key) {
   if (el) { el.classList.add('hidden'); el.innerHTML = ''; }
 }
 
-// ----------------------------------------------------------------------------
-// Construcción del DOM (uno o dos paneles, según la agenda)
-// ----------------------------------------------------------------------------
 function panelHtml(config, inst) {
   const key = inst.key || '';
   const labelBadge = inst.label ? ` <span class="agenda-panel-label">${escapeHtml(inst.label)}</span>` : '';
@@ -217,17 +148,10 @@ function buildContainer(config, instances) {
   }
 }
 
-// ----------------------------------------------------------------------------
-// Entrada principal
-// ----------------------------------------------------------------------------
 export async function renderAgenda(agendaId, navigate, dateKeyOverride) {
   const config = getAgendaConfig(agendaId);
   if (!config) return;
 
-  // dateKeyOverride puede venir de Historial con sufijo "-AM"/"-PM"
-  // (p. ej. "2026-08-01-AM"). La dateKey base siempre son los primeros
-  // 10 caracteres ("AAAA-MM-DD"); a partir de ahí cada instancia arma su
-  // propia dateKey completa.
   const baseDateKey = dateKeyOverride ? dateKeyOverride.slice(0, 10) : dateKeyToday();
 
   const currentUser = getCurrentUser();
@@ -239,15 +163,11 @@ export async function renderAgenda(agendaId, navigate, dateKeyOverride) {
 
   const instances = getInstances(config);
 
-  // Estado limpio para esta agenda (se descarta cualquier panel de la
-  // agenda anterior que estuviera en memoria).
   panels = {};
   instTokens = {};
 
   buildContainer(config, instances);
 
-  // Cada instancia carga y se pinta de forma totalmente independiente;
-  // un error en AM no bloquea ni afecta la carga de PM (o viceversa).
   await Promise.all(instances.map(inst => loadInstance(config, agendaId, uid, baseDateKey, inst)));
 }
 
@@ -256,11 +176,7 @@ async function loadInstance(config, agendaId, uid, baseDateKey, inst) {
   const label = inst.label || '';
   const myToken = nextToken(key);
 
-  // dateKey real en Firestore para esta instancia: sin cambios para
-  // agendas normales; con sufijo "-AM"/"-PM" para las divididas.
   const dateKey = label ? `${baseDateKey}-${label}` : baseDateKey;
-  // Id de almacenamiento para las columnas dinámicas (+/-) de esta
-  // instancia: independiente entre AM y PM, sin tocar data-store.js.
   const storageAgendaId = key ? `${agendaId}-${key}` : agendaId;
 
   const subtitleEl = g('agenda-subtitle', key);
@@ -281,9 +197,6 @@ async function loadInstance(config, agendaId, uid, baseDateKey, inst) {
     }
   }
 
-  // Si mientras esto cargaba el usuario ya navegó a otra agenda, o se
-  // disparó otro reintento de ESTA MISMA instancia, no pintar esta
-  // respuesta tardía encima de lo que ahora está en pantalla.
   if (instTokens[key] !== myToken) return;
 
   let rows, extraColumns, meta, redColumns;
@@ -306,9 +219,6 @@ async function loadInstance(config, agendaId, uid, baseDateKey, inst) {
     meta = {};
     redColumns = {};
   }
-  // Compatibilidad hacia atrás: filas de versiones anteriores traían
-  // `colors` (color por casilla) o no traían ningún color — se normalizan
-  // aquí a un único `rowColor` por fila (color de fila completa).
   rows.forEach(r => {
     if (r.rowColor === undefined || r.rowColor === null) {
       if (r.colors && typeof r.colors === 'object') {
@@ -344,10 +254,6 @@ async function loadInstance(config, agendaId, uid, baseDateKey, inst) {
     showToast(msg, true);
     showLoadWarning(msg, key);
 
-    // Justo después de F5, el canal de Firestore a veces todavía no
-    // terminó de abrirse (falso "offline" transitorio) — se reintenta
-    // solo, en segundo plano, antes de dejarle al usuario únicamente el
-    // botón manual de "Reintentar".
     setTimeout(async () => {
       const recovered = await reconcileAgendaWithServer(
         agendaId, uid, dateKey, storageAgendaId, key, myToken,
@@ -357,26 +263,11 @@ async function loadInstance(config, agendaId, uid, baseDateKey, inst) {
     }, 1500);
   }
 
-  // En una primera visita se pintó la agenda vacía sin tocar Firestore. Se
-  // dispara ahora, en segundo plano y SIN bloquear ni retrasar lo que el
-  // usuario ya está viendo, una verificación real contra el servidor: si
-  // por cualquier motivo ya existían datos guardados (bandera local
-  // perdida, otro dispositivo, etc.), se recuperan y se pintan solos, sin
-  // pisar nada que el usuario ya haya empezado a escribir mientras tanto.
   if (isFirstVisit) {
     reconcileAgendaWithServer(agendaId, uid, dateKey, storageAgendaId, key, myToken, { retries: 1, delayMs: 600, label: 'verificación' });
   }
 }
 
-/**
- * Vuelve a consultar el documento real de la agenda en el servidor y, si
- * encuentra datos guardados que el panel en pantalla todavía no tiene (y el
- * usuario no ha escrito nada localmente todavía, para no pisar su trabajo
- * en curso), los aplica y repinta. Se usa tanto para la verificación
- * silenciosa de "primera visita" como para el reintento automático tras un
- * error de carga. Devuelve true si terminó sin error (haya encontrado
- * datos o no), false si la consulta en sí falló.
- */
 async function reconcileAgendaWithServer(agendaId, uid, dateKey, storageAgendaId, key, myToken, opts = {}) {
   let existing = null;
   try {
@@ -409,9 +300,6 @@ async function reconcileAgendaWithServer(agendaId, uid, dateKey, storageAgendaId
   return true;
 }
 
-// ----------------------------------------------------------------------------
-// Construcción de columnas
-// ----------------------------------------------------------------------------
 function buildColumnList(key) {
   const state = panels[key];
   const cols = [...state.config.leadingColumns];
@@ -425,9 +313,6 @@ function buildColumnList(key) {
   return cols;
 }
 
-// ----------------------------------------------------------------------------
-// Render completo (encabezado + cuerpo + pie) de UNA instancia
-// ----------------------------------------------------------------------------
 function headCellHtml(c, redColumns) {
   const isRed = !!(redColumns && redColumns[c.id]);
   const redCls = isRed ? ' col-red-active' : '';
@@ -456,10 +341,6 @@ function renderTable(key) {
   updatePointsBadge(key);
 }
 
-// ----------------------------------------------------------------------------
-// Clic en el encabezado de una columna: alterna el texto de esa columna en
-// rojo (delegado una sola vez sobre el <thead>, igual que wireBodyEvents).
-// ----------------------------------------------------------------------------
 function wireHeadEvents(key) {
   const thead = g('agenda-thead', key);
   if (!thead || thead.dataset.delegated === '1') return;
@@ -516,7 +397,6 @@ function renderBody(key, precomputedCols) {
   syncColorPicker(key);
 }
 
-/** Refleja en la paleta de colores cuál color (si alguno) tiene la fila actualmente seleccionada. */
 function syncColorPicker(key) {
   const state = panels[key];
   if (!state) return;
@@ -586,9 +466,6 @@ function updatePointsBadge(key) {
   badge.innerHTML = `${gt.toFixed(2)} <span>pts</span>`;
 }
 
-// ----------------------------------------------------------------------------
-// Interacción de celdas (todo escoteado a la instancia `key`)
-// ----------------------------------------------------------------------------
 function selectRow(key, rowId) {
   const state = panels[key];
   if (!state || state.selectedRowId === rowId) return;
@@ -712,9 +589,6 @@ function handlePointDblClick(key, td) {
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(input.value.trim()); });
 }
 
-// ----------------------------------------------------------------------------
-// Modal "AGREGAR": elegir a qué agenda enviar una copia de esta fila
-// ----------------------------------------------------------------------------
 function extractRowLeadValues(state, row) {
   const doctor = row.cells['doctor'] || '';
   const desc = row.cells['desc'] || '';
@@ -754,13 +628,11 @@ function openAgregarModal(key, rowId) {
   });
 }
 
-/** Crea una fila nueva en la agenda destino (hoy), sin necesidad de tenerla abierta. */
 async function addRowToOtherAgenda(uid, targetAgendaId, values) {
   const targetConfig = getAgendaConfig(targetAgendaId);
   if (!targetConfig) return;
 
   const baseDateKey = dateKeyToday();
-  // Cony está dividida en AM/PM: la fila nueva se agrega a la tanda AM por defecto.
   const dateKey = targetConfig.splitAmPm ? `${baseDateKey}-AM` : baseDateKey;
 
   const existing = await fetchWithRetry(() => getAgendaDay(uid, targetAgendaId, dateKey), { retries: 1, label: 'agregar fila' });
@@ -772,7 +644,6 @@ async function addRowToOtherAgenda(uid, targetAgendaId, values) {
   const leadIds = targetConfig.leadingColumns.map(c => c.id);
   if (leadIds.includes('doctor')) newRow.cells['doctor'] = values.doctor;
   if (leadIds.includes('desc')) newRow.cells['desc'] = values.desc;
-  // Unidad: usa la primera columna numérica de "cantidad" que tenga la agenda destino.
   const unidadTargetId = ['unidad', 'unid', 'cant'].find(id => leadIds.includes(id));
   if (unidadTargetId) newRow.cells[unidadTargetId] = values.unidad;
 
@@ -785,10 +656,6 @@ async function addRowToOtherAgenda(uid, targetAgendaId, values) {
   markAgendaAsSynced(targetConfig.splitAmPm ? `${targetAgendaId}-am` : targetAgendaId);
 }
 
-// ----------------------------------------------------------------------------
-// Barra de herramientas: guardar, agregar/quitar fila y columna, descargar
-// (una barra por instancia — AM y PM tienen botones y estado 100% propios)
-// ----------------------------------------------------------------------------
 function wireToolbar(key) {
   const saveBtn = g('btn-save-agenda', key);
   if (saveBtn) {
@@ -926,9 +793,6 @@ function openAddColumnModal(key, isPoint) {
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(); });
 }
 
-// ----------------------------------------------------------------------------
-// Guardado
-// ----------------------------------------------------------------------------
 function setSaveStatus(key, text, cls) {
   const el = g('agenda-save-status', key);
   if (!el) return;
@@ -936,7 +800,6 @@ function setSaveStatus(key, text, cls) {
   el.className = 'save-status' + (cls ? ' ' + cls : '');
 }
 
-/** Devuelve (creando si hace falta) la función de autoguardado debounced propia de esta instancia. */
 function getAutosaveFn(key) {
   if (!autosaveFns[key]) {
     autosaveFns[key] = debounce(async () => {

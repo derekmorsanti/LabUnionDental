@@ -1,8 +1,3 @@
-// ============================================================================
-// main.js — punto de entrada. Decide qué pantalla mostrar según el estado
-// de sesión y conecta todos los módulos entre sí.
-// ============================================================================
-
 import { isFirebaseConfigured, forceReconnectFirestore } from './firebase-config.js?v23';
 import {
   onAuthChange, getUserProfileName, logoutUser,
@@ -11,22 +6,12 @@ import {
 import { renderDashboard } from './dashboard.js?v23';
 import { closeModal, showToast } from './ui-helpers.js?v23';
 
-// Los módulos de cada sección (Agenda, Historial, Calendario, Control
-// General, Datos) se cargan bajo demanda la primera vez que el usuario
-// navega a esa sección, en vez de descargarse todos por adelantado junto
-// con main.js. Cada import() se resuelve una sola vez por sesión — el
-// propio motor de módulos de ES6 cachea el resultado, así que navegar de
-// ida y vuelta a la misma sección no vuelve a pedirla por red.
 const loadAgendaMod = () => import('./agenda.js?v23');
 const loadHistorialMod = () => import('./historial.js?v23');
 const loadCalendarioMod = () => import('./calendario.js?v23');
 const loadControlGeneralMod = () => import('./control-general.js?v23');
 const loadDatosMod = () => import('./datos.js?v23');
 
-// Red de seguridad global: cualquier error de JavaScript no controlado en
-// ningún punto de la app (o cualquier promesa rechazada sin su propio
-// catch) se registra claramente en consola y se avisa con un toast, en vez
-// de dejar la interfaz "congelada" sin ninguna indicación de qué pasó.
 window.addEventListener('error', (event) => {
   console.error('Error no controlado:', event.error || event.message);
   showToast('Ocurrió un error inesperado. Si algo dejó de responder, recarga la página.', true);
@@ -41,9 +26,6 @@ let lastNavParam = null;
 let lastNavExtra = null;
 let currentUserName = '';
 
-// ----------------------------------------------------------------------------
-// Navegación
-// ----------------------------------------------------------------------------
 function showView(id) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById(id).classList.add('active');
@@ -119,9 +101,6 @@ async function navigate(view, param, extra) {
   }
 }
 
-// ----------------------------------------------------------------------------
-// Auth: cambio de vista bienvenida / login / registro
-// ----------------------------------------------------------------------------
 function switchAuthView(id) {
   ['view-welcome', 'view-login', 'view-register'].forEach(v => document.getElementById(v).classList.remove('active'));
   document.getElementById(id).classList.add('active');
@@ -194,9 +173,6 @@ function wireAuthUI() {
   });
 }
 
-// ----------------------------------------------------------------------------
-// Shell de la app (barra lateral, menú móvil, cerrar sesión, navegación)
-// ----------------------------------------------------------------------------
 function wireAppShell() {
   document.querySelectorAll('[data-nav]').forEach(el => {
     el.addEventListener('click', () => navigate(el.dataset.nav));
@@ -210,14 +186,13 @@ function wireAppShell() {
 
   document.getElementById('btn-logout').addEventListener('click', async () => {
     if (!confirm('¿Cerrar sesión?')) return;
-    try { await logoutUser(); } catch (e) { /* onAuthChange igual reflejará el estado real */ }
+    try { await logoutUser(); } catch (e) {  }
   });
 
   document.getElementById('modal-overlay').addEventListener('click', (e) => {
     if (e.target.id === 'modal-overlay') closeModal();
   });
 
-  // Refresca saludo/fecha del dashboard cada minuto (y respeta el cambio de día).
   setInterval(() => {
     if (currentView === 'dashboard' && document.getElementById('view-app').classList.contains('active')) {
       renderDashboard(currentUserName, navigate);
@@ -225,14 +200,6 @@ function wireAppShell() {
   }, 60000);
 }
 
-// ----------------------------------------------------------------------------
-// Reconexión automática: cuando el navegador recupera la conexión (evento
-// "online"), el SDK de Firestore a veces se queda "convencido" de que sigue
-// sin red (falso negativo, común con extensiones de privacidad) y las
-// pantallas se quedan repitiendo "Failed to get document because the client
-// is offline" indefinidamente. Forzamos la reconexión y volvemos a pedir los
-// datos de la vista actual automáticamente.
-// ----------------------------------------------------------------------------
 let reconnecting = false;
 function wireConnectivity() {
   window.addEventListener('online', async () => {
@@ -253,9 +220,6 @@ function wireConnectivity() {
   });
 }
 
-// ----------------------------------------------------------------------------
-// Arranque
-// ----------------------------------------------------------------------------
 let authWired = false;
 
 function init() {
@@ -271,7 +235,7 @@ function init() {
     return;
   }
 
-  if (authWired) return; // evita suscribir el listener de sesión dos veces
+  if (authWired) return;
   authWired = true;
 
   let authResolved = false;
@@ -285,16 +249,11 @@ function init() {
   onAuthChange((user) => {
     authResolved = true;
     if (user) {
-      // Pinta el dashboard de inmediato con un nombre provisional (displayName/correo)
-      // en vez de esperar una segunda consulta a Firestore antes de mostrar algo:
-      // esto es lo que más acorta el tiempo de carga percibido al abrir o recargar la página.
       currentUserName = user.displayName || user.email || '';
       document.getElementById('sidebar-username').textContent = currentUserName;
       showView('view-app');
       navigate('dashboard');
 
-      // El nombre "real" guardado en Firestore se actualiza después, en segundo plano,
-      // sin bloquear nada de lo anterior.
       getUserProfileName(user.uid).then(name => {
         if (name && name !== currentUserName) {
           currentUserName = name;
