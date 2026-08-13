@@ -29,7 +29,7 @@
 import {
   doc, getDoc, getDocFromServer, setDoc, deleteDoc, collection, query, where, getDocs, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
-import { db, forceReconnectFirestore } from './firebase-config.js?v30';
+import { db, forceReconnectFirestore } from './firebase-config.js?v31';
 
 function agendaConfigRef(uid, agendaId) {
   return doc(db, 'users', uid, 'agendaConfigs', agendaId);

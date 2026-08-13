@@ -36,21 +36,21 @@
 import {
   getAgendaConfig, getAllPointColumns, computeRowTotal, computeGrandTotal,
   computeColumnSum, defaultRow, cellUnits, FALLBACK_POINT_VALUE
-} from './agenda-configs.js?v30';
-import { getCurrentUser } from './auth.js?v30';
+} from './agenda-configs.js?v31';
+import { getCurrentUser } from './auth.js?v31';
 import {
   getAgendaDay, autosaveAgendaDay, saveAgendaDay,
   getAgendaExtraColumns, saveAgendaExtraColumns
-} from './data-store.js?v30';
+} from './data-store.js?v31';
 import {
   dateKeyToday, formatAgendaHeaderDate, debounce, escapeHtml, toNumber, generateId, round2,
   fetchWithRetry, describeFirestoreError, markAgendaAsSynced, shiftSaturdayToMonday,
   cacheAgendaDayWrite, getCachedAgendaDayWrite,
   saveAgendaDraft, getAgendaDraft, clearAgendaDraft, listAgendaDrafts,
   buildRescheduleId, getRescheduleQueue, enqueueReschedule, dequeueReschedule
-} from './utils.js?v30';
-import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v30';
-import { captureElementToImage } from './export.js?v30';
+} from './utils.js?v31';
+import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v31';
+import { captureElementToImage } from './export.js?v31';
 
 // ----------------------------------------------------------------------------
 // Botón "AGREGAR" por fila: crea una fila nueva en OTRA agenda (Yesos,
@@ -216,13 +216,6 @@ export async function renderAgenda(agendaId, navigate, dateKeyOverride) {
   }
   const uid = currentUser.uid;
 
-  // No bloquea la apertura de esta agenda: si quedaron reagendados o
-  // borradores de guardado pendientes de una sesión anterior (p. ej. el
-  // navegador se cerró mientras Firebase estaba offline), se reintentan
-  // aquí en segundo plano cada vez que se entra a Agendas.
-  flushRescheduleQueue(uid);
-  flushAgendaDrafts(uid);
-
   const instances = getInstances(config);
 
   // Estado limpio para esta agenda (se descarta cualquier panel de la
@@ -232,9 +225,25 @@ export async function renderAgenda(agendaId, navigate, dateKeyOverride) {
 
   buildContainer(config, instances);
 
+  // Los paneles de ESTA agenda se crean primero — loadInstance sigue
+  // siendo 100% no bloqueante (pinta de inmediato, Firebase va en
+  // segundo plano; ver loadInstance/loadAgendaInBackground, sin tocar).
+  // Iniciar las cargas AQUÍ (antes de procesar colas pendientes) es lo
+  // que garantiza que, si un reagendado pendiente apunta a esta misma
+  // agenda+día, encuentre `panels[...]` ya poblado y pueda reflejar la
+  // fila en vivo sin depender de una ventana de tiempo/caché.
+  const loadPromises = instances.map(inst => loadInstance(config, agendaId, uid, baseDateKey, inst));
+
+  // Ahora sí, en segundo plano y sin bloquear nada de lo anterior, se
+  // reintentan reagendados y borradores de guardado que hubieran quedado
+  // pendientes (p. ej. porque Firebase estaba offline en el momento).
+  console.log('[RESCHEDULE] QUEUE START');
+  flushRescheduleQueue(uid);
+  flushAgendaDrafts(uid);
+
   // Cada instancia carga y se pinta de forma totalmente independiente;
   // un error en AM no bloquea ni afecta la carga de PM (o viceversa).
-  await Promise.all(instances.map(inst => loadInstance(config, agendaId, uid, baseDateKey, inst)));
+  await Promise.all(loadPromises);
 }
 
 async function loadInstance(config, agendaId, uid, baseDateKey, inst) {
@@ -920,7 +929,11 @@ async function scheduleReschedule(uid, pending) {
  * pisar casillas/marcas/columnas que ya existan en el destino.
  */
 async function performReschedule(uid, pending) {
-  console.log('[RESCHEDULE] performReschedule', pending.rescheduleId);
+  console.log('[RESCHEDULE] performReschedule START', {
+    targetAgendaId: pending.targetAgendaId,
+    targetDateKey: pending.targetDateKey,
+    rescheduleId: pending.rescheduleId
+  });
   const targetConfig = getAgendaConfig(pending.targetAgendaId);
   if (!targetConfig) {
     const err = new Error(`No se encontró la configuración de la agenda destino "${pending.targetAgendaId}".`);
@@ -946,10 +959,17 @@ async function performReschedule(uid, pending) {
     }
   }
   if (!existing) {
-    existing = await fetchWithRetry(
-      () => getAgendaDay(uid, pending.targetAgendaId, pending.targetDateKey),
-      { retries: 4, delayMs: 900, label: 'reagendar' }
-    );
+    console.log('[RESCHEDULE] leyendo agenda destino desde Firestore antes de escribir');
+    try {
+      existing = await fetchWithRetry(
+        () => getAgendaDay(uid, pending.targetAgendaId, pending.targetDateKey),
+        { retries: 4, delayMs: 900, label: 'reagendar' }
+      );
+      console.log('[RESCHEDULE] lectura destino OK', { encontroDocumento: !!existing, filas: existing && existing.rows ? existing.rows.length : 0 });
+    } catch (readErr) {
+      console.error('[RESCHEDULE] ERROR leyendo agenda destino:', readErr);
+      throw readErr;
+    }
   }
 
   const rows = (existing && existing.rows && existing.rows.length) ? [...existing.rows] : [];
@@ -967,12 +987,15 @@ async function performReschedule(uid, pending) {
   if (targetRow) {
     // Ya existía (de un intento anterior de este mismo reagendado): se
     // actualizan SOLO estos 3 campos, todo lo demás de la fila queda
-    // intacto (casillas, marcas, color de fila, etc.).
+    // intacto (casillas, marcas, color de fila, etc.). NUNCA se
+    // sobrescriben casillas ya marcadas en esa fila.
+    console.log('[RESCHEDULE] fila destino ya existía (reintento) — actualizando solo doctor/desc/unidad');
     targetRow.cells = { ...targetRow.cells };
     if (leadIds.includes('doctor')) targetRow.cells['doctor'] = pending.doctor;
     if (leadIds.includes('desc')) targetRow.cells['desc'] = pending.descripcion;
     if (unidadTargetId) targetRow.cells[unidadTargetId] = pending.unidad;
   } else {
+    console.log('[RESCHEDULE] creando fila nueva en destino con doctor/desc/unidad únicamente');
     targetRow = defaultRow();
     targetRow.rescheduleId = pending.rescheduleId;
     const cellsToCopy = {};
@@ -983,29 +1006,52 @@ async function performReschedule(uid, pending) {
     rows.push(targetRow);
   }
 
-  await fetchWithRetry(
-    () => autosaveAgendaDay(uid, pending.targetAgendaId, pending.targetDateKey, { rows, extraColumns, meta, redColumns }),
-    { retries: 4, delayMs: 900, label: 'reagendar' }
-  );
+  console.log('[RESCHEDULE] Firebase write START', { targetAgendaId: pending.targetAgendaId, targetDateKey: pending.targetDateKey, totalFilas: rows.length });
+  try {
+    await fetchWithRetry(
+      () => autosaveAgendaDay(uid, pending.targetAgendaId, pending.targetDateKey, { rows, extraColumns, meta, redColumns }),
+      { retries: 4, delayMs: 900, label: 'reagendar' }
+    );
+    console.log('[RESCHEDULE] Firebase write SUCCESS');
+  } catch (writeErr) {
+    console.error('[RESCHEDULE] Firebase write ERROR:', writeErr);
+    throw writeErr;
+  }
+
+  console.log('[RESCHEDULE] updating cache');
   markAgendaAsSynced(storageAgendaId);
   cacheAgendaDayWrite(pending.targetAgendaId, pending.targetDateKey, { rows, extraColumns, meta, redColumns });
 
-  // Si la agenda destino (misma agenda + mismo día) ya está abierta en
-  // pantalla, se actualiza SOLO esa fila puntual (doctor/desc/unidad) —
-  // nunca se reemplaza toda la tabla ni se toca la estructura de
-  // columnas/config del panel, que sigue siendo la del destino.
+  console.log('[RESCHEDULE] updating destination panel');
   const openPanel = panels[targetInstanceKey];
+  console.log('[RESCHEDULE] DESTINATION PANEL', {
+    targetInstanceKey,
+    panelExists: !!openPanel,
+    panelAgendaId: openPanel ? openPanel.agendaId : null,
+    panelDateKey: openPanel ? openPanel.dateKey : null,
+    esperadoAgendaId: pending.targetAgendaId,
+    esperadoDateKey: pending.targetDateKey
+  });
   if (openPanel && openPanel.agendaId === pending.targetAgendaId && openPanel.dateKey === pending.targetDateKey) {
+    // Si la agenda destino (misma agenda + mismo día) ya está abierta en
+    // pantalla, se actualiza SOLO esa fila puntual (doctor/desc/unidad) —
+    // nunca se reemplaza toda la tabla ni se toca la estructura de
+    // columnas/config del panel, que sigue siendo la del destino. Nunca
+    // se pisan casillas/marcas ya existentes en esa fila.
     let liveRow = openPanel.rows.find(r => r.rescheduleId === pending.rescheduleId);
     if (liveRow) {
       liveRow.cells = { ...liveRow.cells, ...targetRow.cells };
     } else {
       openPanel.rows.push({ ...targetRow, cells: { ...targetRow.cells } });
     }
+    console.log('[RESCHEDULE] BEFORE RENDER (panel destino abierto en esta pestaña)');
     renderBody(targetInstanceKey);
     renderFooter(targetInstanceKey);
     updatePointsBadge(targetInstanceKey);
+  } else {
+    console.log('[RESCHEDULE] panel destino no está abierto en esta pestaña ahora mismo — se verá al abrirlo (caché reciente o carga en segundo plano de Firestore)');
   }
+  console.log('[RESCHEDULE] COMPLETE', pending.rescheduleId);
 }
 
 /**
