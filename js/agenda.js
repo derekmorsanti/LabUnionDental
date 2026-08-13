@@ -1,36 +1,64 @@
+// ============================================================================
+// agenda.js — la hoja tipo Excel de cada agenda: render, interacción de
+// casillas (clic = X, doble clic = número), cálculo de puntos en tiempo
+// real, columnas dinámicas, filas, guardado y descarga.
+//
+// ----------------------------------------------------------------------------
+// INSTANCIAS AM/PM
+// ----------------------------------------------------------------------------
+// La mayoría de agendas (Eliu, Abner, Dina, Astryd) se renderizan como una
+// sola "instancia" — igual que antes. La agenda de Cony (config.splitAmPm)
+// se renderiza como DOS instancias independientes, 'am' y 'pm', una junto a
+// la otra (ver .agenda-split-grid en css/styles.css).
+//
+// Cada instancia tiene:
+//   - su propio estado en memoria (panels[key])
+//   - sus propios elementos del DOM, generados dinámicamente con ids
+//     sufijados ("-am" / "-pm"); las agendas sin split usan key='' y por
+//     lo tanto los MISMOS ids que existían antes (agenda-table,
+//     agenda-thead, btn-save-agenda, etc.), así que su comportamiento no
+//     cambió en absoluto.
+//   - su propio documento en Firestore: se reutiliza EXACTAMENTE la misma
+//     colección/estructura de siempre (users/{uid}/agendas/{agendaId}_{dateKey}),
+//     sólo que para Cony la dateKey lleva un sufijo "-AM" / "-PM"
+//     (p. ej. "2026-08-01-AM" y "2026-08-01-PM"). El campo agendaId
+//     guardado dentro del documento sigue siendo 'cony' en ambos casos,
+//     así que Historial sigue encontrando y listando las dos tandas de
+//     cada día sin ningún cambio en data-store.js.
+//   - sus propias columnas dinámicas (+/-): se guardan bajo un id de
+//     almacenamiento propio ('cony-am' / 'cony-pm') en la colección
+//     agendaConfigs, para que agregar una columna en AM no la agregue
+//     también en PM.
+//   - su propio debounce de autoguardado, para que escribir en una tabla
+//     nunca dispare ni interfiera con el guardado de la otra.
+// ============================================================================
+
 import {
   getAgendaConfig, getAllPointColumns, computeRowTotal, computeGrandTotal,
   computeColumnSum, defaultRow, cellUnits, FALLBACK_POINT_VALUE
-} from './agenda-configs.js?v23';
-import { getCurrentUser } from './auth.js?v23';
+} from './agenda-configs.js?v30';
+import { getCurrentUser } from './auth.js?v30';
 import {
   getAgendaDay, autosaveAgendaDay, saveAgendaDay,
   getAgendaExtraColumns, saveAgendaExtraColumns
-} from './data-store.js?v23';
+} from './data-store.js?v30';
 import {
   dateKeyToday, formatAgendaHeaderDate, debounce, escapeHtml, toNumber, generateId, round2,
-  fetchWithRetry, describeFirestoreError
-} from './utils.js?v23';
-import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v23';
-import { captureElementToImage } from './export.js?v23';
+  fetchWithRetry, describeFirestoreError, markAgendaAsSynced, shiftSaturdayToMonday,
+  cacheAgendaDayWrite, getCachedAgendaDayWrite,
+  saveAgendaDraft, getAgendaDraft, clearAgendaDraft, listAgendaDrafts,
+  buildRescheduleId, getRescheduleQueue, enqueueReschedule, dequeueReschedule
+} from './utils.js?v30';
+import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v30';
+import { captureElementToImage } from './export.js?v30';
 
-const AGENDA_SEEN_PREFIX = 'lud_agenda_seen_';
-const agendaSyncedMemory = new Set();
-
-function agendaSeenKey(storageAgendaId) {
-  return `${AGENDA_SEEN_PREFIX}${storageAgendaId}`;
-}
-function hasAgendaEverSynced(storageAgendaId) {
-  if (agendaSyncedMemory.has(storageAgendaId)) return true;
-  try { return localStorage.getItem(agendaSeenKey(storageAgendaId)) === '1'; }
-  catch (_) { return false; }
-}
-function markAgendaAsSynced(storageAgendaId) {
-  agendaSyncedMemory.add(storageAgendaId);
-  try { localStorage.setItem(agendaSeenKey(storageAgendaId), '1'); }
-  catch (_) {  }
-}
-
+// ----------------------------------------------------------------------------
+// Botón "AGREGAR" por fila: crea una fila nueva en OTRA agenda (Yesos,
+// Metales, Tallado, Encerado o Pretallado), copiando SOLO doctor/paciente,
+// descripción y unidad. No requiere que la agenda destino esté abierta —
+// escribe directamente en su documento del día en Firestore, reutilizando
+// exactamente el mismo esquema que usa el resto de la app.
+// ----------------------------------------------------------------------------
 const AGREGAR_TARGETS = [
   { label: 'Yesos', agendaId: 'cony' },
   { label: 'Encerado', agendaId: 'dina' },
@@ -41,6 +69,10 @@ const AGREGAR_TARGETS = [
 
 const DEFAULT_ROW_COUNT = 12;
 
+// Paleta de colores disponibles para pintar el texto de una fila completa
+// (5 colores, sin negro/por-defecto). Flujo: clic en una fila para
+// seleccionarla (se resalta) → clic en un color → el texto de TODA esa
+// fila cambia de inmediato a ese color y se guarda en row.rowColor.
 const CELL_COLORS = [
   { key: 'red', label: 'Rojo', hex: '#dc2626' },
   { key: 'blue', label: 'Azul', hex: '#2563eb' },
@@ -50,8 +82,17 @@ const CELL_COLORS = [
 ];
 const RED_COLUMN_HEX = '#dc2626';
 
+// Estado de cada instancia visible actualmente, indexado por key ('' cuando
+// la agenda no está dividida; 'am' / 'pm' cuando sí lo está).
 let panels = {};
+// Contador de "token" de carga POR instancia — evita que una respuesta
+// tardía de red (p. ej. al reintentar tras un error, o si el usuario
+// navega rápido entre agendas) sobrescriba datos más nuevos ya en
+// pantalla. Cada instancia tiene su propio contador para que un
+// reintento en AM nunca invalide lo que ya está cargado en PM.
 let instTokens = {};
+// Funciones de autoguardado (debounced), una por instancia — así el
+// guardado automático de AM y PM nunca comparten temporizador.
 let autosaveFns = {};
 
 function nextToken(key) {
@@ -59,6 +100,7 @@ function nextToken(key) {
   return instTokens[key];
 }
 
+/** Definición de instancias a renderizar según la config de la agenda. */
 function getInstances(config) {
   if (config.splitAmPm) {
     return [
@@ -69,8 +111,11 @@ function getInstances(config) {
   return [{ key: '', label: '' }];
 }
 
+/** Sufijo de id para una key de instancia ('' → sin sufijo, igual que antes). */
 function suf(key) { return key ? `-${key}` : ''; }
+/** Construye el id completo de un elemento para una instancia dada. */
 function eid(base, key) { return `${base}${suf(key)}`; }
+/** getElementById ya resuelto contra la instancia. */
 function g(base, key) { return document.getElementById(eid(base, key)); }
 
 function showLoadWarning(message, key) {
@@ -97,6 +142,9 @@ function hideLoadWarning(key) {
   if (el) { el.classList.add('hidden'); el.innerHTML = ''; }
 }
 
+// ----------------------------------------------------------------------------
+// Construcción del DOM (uno o dos paneles, según la agenda)
+// ----------------------------------------------------------------------------
 function panelHtml(config, inst) {
   const key = inst.key || '';
   const labelBadge = inst.label ? ` <span class="agenda-panel-label">${escapeHtml(inst.label)}</span>` : '';
@@ -148,10 +196,17 @@ function buildContainer(config, instances) {
   }
 }
 
+// ----------------------------------------------------------------------------
+// Entrada principal
+// ----------------------------------------------------------------------------
 export async function renderAgenda(agendaId, navigate, dateKeyOverride) {
   const config = getAgendaConfig(agendaId);
   if (!config) return;
 
+  // dateKeyOverride puede venir de Historial con sufijo "-AM"/"-PM"
+  // (p. ej. "2026-08-01-AM"). La dateKey base siempre son los primeros
+  // 10 caracteres ("AAAA-MM-DD"); a partir de ahí cada instancia arma su
+  // propia dateKey completa.
   const baseDateKey = dateKeyOverride ? dateKeyOverride.slice(0, 10) : dateKeyToday();
 
   const currentUser = getCurrentUser();
@@ -161,13 +216,24 @@ export async function renderAgenda(agendaId, navigate, dateKeyOverride) {
   }
   const uid = currentUser.uid;
 
+  // No bloquea la apertura de esta agenda: si quedaron reagendados o
+  // borradores de guardado pendientes de una sesión anterior (p. ej. el
+  // navegador se cerró mientras Firebase estaba offline), se reintentan
+  // aquí en segundo plano cada vez que se entra a Agendas.
+  flushRescheduleQueue(uid);
+  flushAgendaDrafts(uid);
+
   const instances = getInstances(config);
 
+  // Estado limpio para esta agenda (se descarta cualquier panel de la
+  // agenda anterior que estuviera en memoria).
   panels = {};
   instTokens = {};
 
   buildContainer(config, instances);
 
+  // Cada instancia carga y se pinta de forma totalmente independiente;
+  // un error en AM no bloquea ni afecta la carga de PM (o viceversa).
   await Promise.all(instances.map(inst => loadInstance(config, agendaId, uid, baseDateKey, inst)));
 }
 
@@ -176,60 +242,47 @@ async function loadInstance(config, agendaId, uid, baseDateKey, inst) {
   const label = inst.label || '';
   const myToken = nextToken(key);
 
+  // dateKey real en Firestore para esta instancia: sin cambios para
+  // agendas normales; con sufijo "-AM"/"-PM" para las divididas.
   const dateKey = label ? `${baseDateKey}-${label}` : baseDateKey;
+  // Id de almacenamiento para las columnas dinámicas (+/-) de esta
+  // instancia: independiente entre AM y PM, sin tocar data-store.js.
   const storageAgendaId = key ? `${agendaId}-${key}` : agendaId;
 
   const subtitleEl = g('agenda-subtitle', key);
-  if (subtitleEl) subtitleEl.textContent = 'Cargando…';
   hideLoadWarning(key);
 
-  const isFirstVisit = !hasAgendaEverSynced(storageAgendaId);
-
-  let existing = null;
-  let loadError = null;
-  if (!isFirstVisit) {
-    try {
-      existing = await fetchWithRetry(() => getAgendaDay(uid, agendaId, dateKey), { retries: 2, delayMs: 700, label: 'cargar agenda' });
-      markAgendaAsSynced(storageAgendaId);
-    } catch (e) {
-      loadError = e;
-      console.error(`Error al cargar agenda (${agendaId}${suf(key)}):`, e);
-    }
-  }
-
-  if (instTokens[key] !== myToken) return;
+  // ------------------------------------------------------------------
+  // RENDER INMEDIATO: nunca se espera a Firestore para mostrar la
+  // agenda. Prioridad de qué se pinta primero:
+  //   1) Borrador local duradero (localStorage) — sobrevive a un F5 y es
+  //      la fuente más confiable si hubo ediciones que Firestore todavía
+  //      no confirmó (p. ej. estaba offline).
+  //   2) Caché en memoria de una escritura reciente ya CONFIRMADA por
+  //      Firestore (vive ~20s, útil justo después de guardar/reagendar).
+  //   3) Tabla vacía por defecto.
+  // La carga/verificación real contra el servidor ocurre DESPUÉS, en
+  // segundo plano, y nunca puede pisar silenciosamente un borrador local
+  // más nuevo que lo que el propio Firestore reporta como última
+  // actualización (ver loadAgendaInBackground/reconcileAgendaWithServer).
+  // ------------------------------------------------------------------
+  const draftEntry = getAgendaDraft(agendaId, dateKey);
+  const cachedWrite = !draftEntry ? getCachedAgendaDayWrite(agendaId, dateKey) : null;
+  const source = (draftEntry ? draftEntry.data : null) || cachedWrite;
 
   let rows, extraColumns, meta, redColumns;
-  if (existing) {
-    rows = (existing.rows && existing.rows.length) ? existing.rows : [defaultRow()];
-    extraColumns = existing.extraColumns || [];
-    meta = existing.meta || {};
-    redColumns = existing.redColumns || {};
+  if (source) {
+    rows = (source.rows && source.rows.length) ? source.rows : [defaultRow()];
+    extraColumns = source.extraColumns || [];
+    meta = source.meta || {};
+    redColumns = source.redColumns || {};
   } else {
-    extraColumns = [];
-    if (!isFirstVisit && !loadError) {
-      try {
-        extraColumns = await fetchWithRetry(() => getAgendaExtraColumns(uid, storageAgendaId), { label: 'columnas' });
-      } catch (e) {
-        extraColumns = [];
-      }
-      if (instTokens[key] !== myToken) return;
-    }
     rows = Array.from({ length: DEFAULT_ROW_COUNT }, () => defaultRow());
+    extraColumns = [];
     meta = {};
     redColumns = {};
   }
-  rows.forEach(r => {
-    if (r.rowColor === undefined || r.rowColor === null) {
-      if (r.colors && typeof r.colors === 'object') {
-        const firstColorKey = Object.values(r.colors)[0];
-        r.rowColor = CELL_COLORS.some(c => c.key === firstColorKey) ? firstColorKey : null;
-      } else {
-        r.rowColor = null;
-      }
-    }
-    delete r.colors;
-  });
+  normalizeRowColors(rows);
 
   const [yy, mm, dd] = baseDateKey.split('-').map(Number);
   const weekday = new Intl.DateTimeFormat('es-GT', { weekday: 'long', timeZone: 'UTC' })
@@ -249,11 +302,93 @@ async function loadInstance(config, agendaId, uid, baseDateKey, inst) {
   renderTable(key);
   wireToolbar(key);
 
+  if (draftEntry) {
+    // Había cambios locales sin confirmar (el borrador ya estaba en
+    // localStorage de ANTES de esta carga, con su savedAt original
+    // intacto): se intenta sincronizarlos contra Firestore de inmediato,
+    // en segundo plano, sin volver a "tocar" el borrador ni su marca de
+    // tiempo — sincronizar no es una edición nueva.
+    getAutosaveFn(key)();
+  }
+
+  // ------------------------------------------------------------------
+  // Carga real contra Firestore, SIEMPRE en segundo plano — nunca
+  // bloquea ni retrasa lo que el usuario ya está viendo. Si el
+  // documento existe y el usuario no ha escrito nada todavía, se aplica
+  // y se repinta solo. Si Firestore está offline, no se bloquea nada:
+  // se avisa con el banner/reintentar de siempre y se reintenta solo
+  // más tarde (reconexión o próxima apertura), sin tocar lo ya pintado.
+  // ------------------------------------------------------------------
+  if (cachedWrite) markAgendaAsSynced(storageAgendaId);
+  loadAgendaInBackground(agendaId, uid, dateKey, storageAgendaId, key, myToken, { hadCache: !!cachedWrite });
+}
+
+/** Normaliza filas viejas: `colors` (color por casilla) → `rowColor` (color de fila completa). */
+function normalizeRowColors(rows) {
+  rows.forEach(r => {
+    if (r.rowColor === undefined || r.rowColor === null) {
+      if (r.colors && typeof r.colors === 'object') {
+        const firstColorKey = Object.values(r.colors)[0];
+        r.rowColor = CELL_COLORS.some(c => c.key === firstColorKey) ? firstColorKey : null;
+      } else {
+        r.rowColor = null;
+      }
+    }
+    delete r.colors;
+  });
+}
+
+/**
+ * Carga (o verifica) la agenda contra Firestore en segundo plano, sin que
+ * el usuario tenga que esperarla para ver la tabla. Si encuentra datos y
+ * el usuario no escribió nada mientras tanto, los aplica; si el
+ * documento del día no existe pero sí hay columnas dinámicas guardadas
+ * para esta agenda, también las aplica. Si Firestore está offline, no
+ * bloquea ni "corrompe" nada: solo avisa y reintenta solo más tarde.
+ */
+/**
+ * True si hay AHORA MISMO (lectura en vivo, no una marca de tiempo vieja
+ * guardada en el panel) un borrador local sin confirmar que sea más nuevo
+ * que la última actualización real que reporta Firestore. Si no hay
+ * ningún borrador pendiente (ya se confirmó y se borró, o nunca hubo
+ * ediciones), el servidor es seguro de aplicar aunque la tabla en
+ * pantalla ya tenga contenido — el contenido por sí solo NO es motivo
+ * para bloquear la sincronización para siempre.
+ */
+function draftIsNewerThanServer(agendaId, dateKey, existing) {
+  const entry = getAgendaDraft(agendaId, dateKey);
+  if (!entry) return false;
+  const serverMillis = (existing && existing.updatedAt && typeof existing.updatedAt.toMillis === 'function')
+    ? existing.updatedAt.toMillis()
+    : 0;
+  return entry.savedAt > serverMillis;
+}
+
+async function loadAgendaInBackground(agendaId, uid, dateKey, storageAgendaId, key, myToken, opts = {}) {
+  let existing = null;
+  let loadError = null;
+  try {
+    existing = await fetchWithRetry(() => getAgendaDay(uid, agendaId, dateKey), { retries: 2, delayMs: 700, label: 'cargar agenda' });
+    markAgendaAsSynced(storageAgendaId);
+  } catch (e) {
+    loadError = e;
+    console.error(`Error al cargar agenda (${agendaId}${suf(key)}):`, e);
+  }
+
+  // Si mientras esto cargaba el usuario ya navegó a otra agenda, o se
+  // disparó otro reintento de ESTA MISMA instancia, no pintar esta
+  // respuesta tardía encima de lo que ahora está en pantalla.
+  if (instTokens[key] !== myToken) return;
+
   if (loadError) {
     const msg = `No se pudieron cargar los datos guardados de esta agenda — esto NO significa que se hayan borrado. ${describeFirestoreError(loadError)}`;
     showToast(msg, true);
     showLoadWarning(msg, key);
 
+    // Justo después de F5, el canal de Firestore a veces todavía no
+    // terminó de abrirse (falso "offline" transitorio) — se reintenta
+    // solo, en segundo plano, antes de dejarle al usuario únicamente el
+    // botón manual de "Reintentar". Nunca bloquea la interfaz.
     setTimeout(async () => {
       const recovered = await reconcileAgendaWithServer(
         agendaId, uid, dateKey, storageAgendaId, key, myToken,
@@ -261,13 +396,51 @@ async function loadInstance(config, agendaId, uid, baseDateKey, inst) {
       );
       if (recovered && instTokens[key] === myToken) hideLoadWarning(key);
     }, 1500);
+    return;
   }
 
-  if (isFirstVisit) {
-    reconcileAgendaWithServer(agendaId, uid, dateKey, storageAgendaId, key, myToken, { retries: 1, delayMs: 600, label: 'verificación' });
+  const state = panels[key];
+  if (!state) return;
+
+  if (existing) {
+    const skip = draftIsNewerThanServer(agendaId, dateKey, existing);
+    if (!skip) {
+      state.rows = (existing.rows && existing.rows.length) ? existing.rows : state.rows;
+      state.extraColumns = existing.extraColumns || state.extraColumns;
+      state.meta = existing.meta || state.meta;
+      state.redColumns = existing.redColumns || state.redColumns;
+      normalizeRowColors(state.rows);
+      clearAgendaDraft(agendaId, dateKey);
+      renderTable(key);
+    }
+    return;
+  }
+
+  // No hay documento del día todavía: si al menos hay columnas dinámicas
+  // guardadas para esta agenda, se aplican (sin tocar filas si hay un
+  // borrador local sin confirmar de por medio).
+  if (!draftIsNewerThanServer(agendaId, dateKey, existing)) {
+    try {
+      const extraColumns = await fetchWithRetry(() => getAgendaExtraColumns(uid, storageAgendaId), { retries: 1, label: 'columnas' });
+      if (instTokens[key] !== myToken) return;
+      if (extraColumns && extraColumns.length && !draftIsNewerThanServer(agendaId, dateKey, existing)) {
+        state.extraColumns = extraColumns;
+        renderTable(key);
+      }
+    } catch (e) {
+      // Columnas dinámicas son un detalle menor: si falla, no se avisa ni se bloquea nada.
+    }
   }
 }
 
+/**
+ * Vuelve a consultar el documento real de la agenda en el servidor y, si
+ * encuentra datos guardados que el panel en pantalla todavía no tiene (y el
+ * usuario no ha escrito nada localmente todavía, para no pisar su trabajo
+ * en curso), los aplica y repinta. Se usa para el reintento automático tras
+ * un error de carga. Devuelve true si terminó sin error (haya encontrado
+ * datos o no), false si la consulta en sí falló.
+ */
 async function reconcileAgendaWithServer(agendaId, uid, dateKey, storageAgendaId, key, myToken, opts = {}) {
   let existing = null;
   try {
@@ -287,19 +460,22 @@ async function reconcileAgendaWithServer(agendaId, uid, dateKey, storageAgendaId
   const state = panels[key];
   if (!state) return true;
 
-  const hasLocalEdits = state.rows.some(r => Object.values(r.cells || {}).some(v => v !== '' && v !== undefined && v !== null));
-  if (hasLocalEdits) return true;
+  if (draftIsNewerThanServer(agendaId, dateKey, existing)) return true;
 
   state.rows = (existing.rows && existing.rows.length) ? existing.rows : state.rows;
   state.extraColumns = existing.extraColumns || state.extraColumns;
   state.meta = existing.meta || state.meta;
   state.redColumns = existing.redColumns || state.redColumns;
-  state.rows.forEach(r => { if (r.rowColor === undefined) r.rowColor = null; });
+  normalizeRowColors(state.rows);
+  clearAgendaDraft(agendaId, dateKey);
 
   renderTable(key);
   return true;
 }
 
+// ----------------------------------------------------------------------------
+// Construcción de columnas
+// ----------------------------------------------------------------------------
 function buildColumnList(key) {
   const state = panels[key];
   const cols = [...state.config.leadingColumns];
@@ -313,6 +489,9 @@ function buildColumnList(key) {
   return cols;
 }
 
+// ----------------------------------------------------------------------------
+// Render completo (encabezado + cuerpo + pie) de UNA instancia
+// ----------------------------------------------------------------------------
 function headCellHtml(c, redColumns) {
   const isRed = !!(redColumns && redColumns[c.id]);
   const redCls = isRed ? ' col-red-active' : '';
@@ -341,6 +520,10 @@ function renderTable(key) {
   updatePointsBadge(key);
 }
 
+// ----------------------------------------------------------------------------
+// Clic en el encabezado de una columna: alterna el texto de esa columna en
+// rojo (delegado una sola vez sobre el <thead>, igual que wireBodyEvents).
+// ----------------------------------------------------------------------------
 function wireHeadEvents(key) {
   const thead = g('agenda-thead', key);
   if (!thead || thead.dataset.delegated === '1') return;
@@ -397,6 +580,7 @@ function renderBody(key, precomputedCols) {
   syncColorPicker(key);
 }
 
+/** Refleja en la paleta de colores cuál color (si alguno) tiene la fila actualmente seleccionada. */
 function syncColorPicker(key) {
   const state = panels[key];
   if (!state) return;
@@ -466,6 +650,9 @@ function updatePointsBadge(key) {
   badge.innerHTML = `${gt.toFixed(2)} <span>pts</span>`;
 }
 
+// ----------------------------------------------------------------------------
+// Interacción de celdas (todo escoteado a la instancia `key`)
+// ----------------------------------------------------------------------------
 function selectRow(key, rowId) {
   const state = panels[key];
   if (!state || state.selectedRowId === rowId) return;
@@ -502,7 +689,11 @@ function wireBodyEvents(key) {
     if (tr) selectRow(key, tr.dataset.row);
 
     const agregarBtn = e.target.closest('[data-agregar]');
-    if (agregarBtn) { openAgregarModal(key, agregarBtn.dataset.agregar); return; }
+    if (agregarBtn) {
+      console.log('[RESCHEDULE] Agregar clicked', agregarBtn.dataset.agregar);
+      openAgregarModal(key, agregarBtn.dataset.agregar);
+      return;
+    }
 
     const delBtn = e.target.closest('[data-delrow]');
     if (delBtn) {
@@ -589,6 +780,9 @@ function handlePointDblClick(key, td) {
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(input.value.trim()); });
 }
 
+// ----------------------------------------------------------------------------
+// Modal "AGREGAR": elegir a qué agenda enviar una copia de esta fila
+// ----------------------------------------------------------------------------
 function extractRowLeadValues(state, row) {
   const doctor = row.cells['doctor'] || '';
   const desc = row.cells['desc'] || '';
@@ -600,62 +794,250 @@ function extractRowLeadValues(state, row) {
 }
 
 function openAgregarModal(key, rowId) {
+  console.log('[RESCHEDULE] openAgregarModal', key, rowId);
   const state = panels[key];
-  if (!state) return;
+  if (!state) { console.error('[RESCHEDULE] ERROR: no hay panel activo para key=', key); return; }
   const row = state.rows.find(r => r.id === rowId);
-  if (!row) return;
+  if (!row) { console.error('[RESCHEDULE] ERROR: no se encontró la fila', rowId); return; }
   const values = extractRowLeadValues(state, row);
 
   const box = openModal(`
     <h3>Agregar a otra agenda</h3>
     <p>Se creará una fila nueva con doctor/paciente, descripción y unidad. Los demás campos quedan vacíos para editar ahí.</p>
+    <div class="field">
+      <label for="agregar-fecha">Fecha destino</label>
+      <input type="date" id="agregar-fecha" value="${dateKeyToday()}">
+    </div>
+    <p style="font-size:12.5px;color:var(--ink-muted);margin-top:-10px;margin-bottom:18px;">Si la fecha elegida cae en sábado, se reagenda automáticamente al lunes siguiente.</p>
     <div class="modal-actions" style="flex-wrap:wrap;justify-content:center;">
       ${AGREGAR_TARGETS.map(t => `<button class="btn btn-outline" data-target="${t.agendaId}">${escapeHtml(t.label)}</button>`).join('')}
     </div>
   `);
+  const fechaInput = box.querySelector('#agregar-fecha');
+
   box.querySelectorAll('[data-target]').forEach(btn => {
     btn.addEventListener('click', async () => {
+      const targetAgendaId = btn.dataset.target;
+      console.log('[RESCHEDULE] confirmar reagendamiento', targetAgendaId);
+      const target = AGREGAR_TARGETS.find(t => t.agendaId === targetAgendaId);
+      const targetLabel = target ? target.label : targetAgendaId;
+      const rawDate = (fechaInput && fechaInput.value) ? fechaInput.value : dateKeyToday();
       closeModal();
+
       try {
-        await addRowToOtherAgenda(state.uid, btn.dataset.target, values);
-        const target = AGREGAR_TARGETS.find(t => t.agendaId === btn.dataset.target);
-        showToast(`Fila agregada a la agenda de ${target ? target.label : btn.dataset.target}`);
+        console.log('[RESCHEDULE] iniciando reagendamiento');
+        const finalDateKey = await addRowToOtherAgenda(state.uid, targetAgendaId, values, rawDate, {
+          agendaId: state.agendaId, dateKey: state.dateKey, rowId
+        });
+        const wasShifted = finalDateKey !== rawDate;
+        showToast(
+          wasShifted
+            ? `Fila agregada a la agenda de ${targetLabel} — reagendada al lunes ${finalDateKey} (la fecha elegida caía en sábado)`
+            : `Fila agregada a la agenda de ${targetLabel} (${finalDateKey})`
+        );
       } catch (e) {
-        console.error('Error al agregar fila a otra agenda:', e);
-        showToast(describeFirestoreError(e), true);
+        console.error('[RESCHEDULE] ERROR:', e);
+        showToast(
+          `No se pudo confirmar el reagendado a ${targetLabel} por ahora (sin conexión) — doctor/descripción/unidad quedaron guardados y se reintentará solo en cuanto vuelva la señal.`,
+          true
+        );
       }
     });
   });
 }
 
-async function addRowToOtherAgenda(uid, targetAgendaId, values) {
+/**
+ * Punto de entrada principal del reagendado (se conserva con este nombre
+ * porque es lo que llama el modal de "Agregar a otra agenda"). Arma el
+ * `pending` (SOLO doctor/descripción/unidad + metadatos de ruteo — nunca
+ * casillas) y lo delega a scheduleReschedule/performReschedule, que son
+ * quienes de verdad guardan la cola persistente y hablan con Firebase.
+ * Si Firebase no confirma de inmediato, el pending YA quedó en la cola
+ * (scheduleReschedule lo encola antes de intentar) y esta función lanza
+ * el error para que el modal avise al usuario — no se pierde nada.
+ * Devuelve la fecha (YYYY-MM-DD) final usada si se confirmó al instante.
+ */
+async function addRowToOtherAgenda(uid, targetAgendaId, values, rawDateKey, sourceInfo) {
+  console.log('[RESCHEDULE] addRowToOtherAgenda', { targetAgendaId, values, rawDateKey, sourceInfo });
+
   const targetConfig = getAgendaConfig(targetAgendaId);
-  if (!targetConfig) return;
+  if (!targetConfig) {
+    const err = new Error(`No se encontró la configuración de la agenda destino "${targetAgendaId}".`);
+    console.error('[RESCHEDULE] ERROR:', err);
+    throw err;
+  }
 
-  const baseDateKey = dateKeyToday();
-  const dateKey = targetConfig.splitAmPm ? `${baseDateKey}-AM` : baseDateKey;
+  const baseDateKey = shiftSaturdayToMonday(rawDateKey || dateKeyToday());
+  const targetDateKey = targetConfig.splitAmPm ? `${baseDateKey}-AM` : baseDateKey;
 
-  const existing = await fetchWithRetry(() => getAgendaDay(uid, targetAgendaId, dateKey), { retries: 1, label: 'agregar fila' });
-  const rows = (existing && existing.rows) ? [...existing.rows] : [];
-  const extraColumns = (existing && existing.extraColumns) || [];
-  const meta = (existing && existing.meta) || {};
+  // Solo estos 3 valores viajan al reagendar — nunca las casillas
+  // marcadas del origen.
+  const pending = {
+    rescheduleId: buildRescheduleId({
+      sourceAgendaId: (sourceInfo && sourceInfo.agendaId) || '',
+      sourceDateKey: (sourceInfo && sourceInfo.dateKey) || '',
+      sourceRowId: (sourceInfo && sourceInfo.rowId) || '',
+      targetAgendaId, targetDateKey
+    }),
+    sourceAgendaId: (sourceInfo && sourceInfo.agendaId) || '',
+    sourceDateKey: (sourceInfo && sourceInfo.dateKey) || '',
+    sourceRowId: (sourceInfo && sourceInfo.rowId) || '',
+    targetAgendaId, targetDateKey,
+    doctor: values.doctor, descripcion: values.desc, unidad: values.unidad,
+    createdAt: Date.now()
+  };
 
-  const newRow = defaultRow();
-  const leadIds = targetConfig.leadingColumns.map(c => c.id);
-  if (leadIds.includes('doctor')) newRow.cells['doctor'] = values.doctor;
-  if (leadIds.includes('desc')) newRow.cells['desc'] = values.desc;
-  const unidadTargetId = ['unidad', 'unid', 'cant'].find(id => leadIds.includes(id));
-  if (unidadTargetId) newRow.cells[unidadTargetId] = values.unidad;
-
-  rows.push(newRow);
-
-  await fetchWithRetry(
-    () => autosaveAgendaDay(uid, targetAgendaId, dateKey, { rows, extraColumns, meta }),
-    { retries: 1, label: 'agregar fila' }
-  );
-  markAgendaAsSynced(targetConfig.splitAmPm ? `${targetAgendaId}-am` : targetAgendaId);
+  const result = await scheduleReschedule(uid, pending);
+  if (!result.ok) {
+    throw result.error || new Error('No se pudo confirmar el reagendado (sin conexión); quedó en la cola y se reintentará automáticamente.');
+  }
+  return baseDateKey;
 }
 
+/**
+ * Guarda el pending en la cola persistente ANTES de tocar Firebase (para
+ * no perderlo si falla), intenta escribirlo, y solo lo saca de la cola si
+ * Firebase confirma. Nunca deja el pending a medias ni lo vacía por un
+ * fallo de red.
+ */
+async function scheduleReschedule(uid, pending) {
+  console.log('[RESCHEDULE] scheduleReschedule', pending.rescheduleId);
+  enqueueReschedule(pending);
+  try {
+    await performReschedule(uid, pending);
+    dequeueReschedule(pending.rescheduleId);
+    return { ok: true };
+  } catch (e) {
+    console.error('[RESCHEDULE] ERROR:', e);
+    return { ok: false, error: e };
+  }
+}
+
+/**
+ * Escribe (o actualiza) SOLO doctor/descripción/unidad en la fila destino,
+ * identificada por pending.rescheduleId para ser idempotente — un mismo
+ * pending puede reintentarse varias veces sin crear filas duplicadas ni
+ * pisar casillas/marcas/columnas que ya existan en el destino.
+ */
+async function performReschedule(uid, pending) {
+  console.log('[RESCHEDULE] performReschedule', pending.rescheduleId);
+  const targetConfig = getAgendaConfig(pending.targetAgendaId);
+  if (!targetConfig) {
+    const err = new Error(`No se encontró la configuración de la agenda destino "${pending.targetAgendaId}".`);
+    console.error('[RESCHEDULE] ERROR:', err);
+    throw err;
+  }
+
+  const storageAgendaId = targetConfig.splitAmPm ? `${pending.targetAgendaId}-am` : pending.targetAgendaId;
+  const targetInstanceKey = targetConfig.splitAmPm ? 'am' : '';
+
+  // Se prioriza cualquier copia ya conocida (caché reciente o el panel
+  // realmente abierto en pantalla) antes de depender de una lectura de
+  // red — reduce la ventana en la que un "offline" transitorio de
+  // Firestore puede bloquear el reagendado.
+  let existing = getCachedAgendaDayWrite(pending.targetAgendaId, pending.targetDateKey);
+  if (!existing) {
+    const livePanel = panels[targetInstanceKey];
+    if (livePanel && livePanel.agendaId === pending.targetAgendaId && livePanel.dateKey === pending.targetDateKey) {
+      existing = {
+        rows: livePanel.rows, extraColumns: livePanel.extraColumns,
+        meta: livePanel.meta, redColumns: livePanel.redColumns
+      };
+    }
+  }
+  if (!existing) {
+    existing = await fetchWithRetry(
+      () => getAgendaDay(uid, pending.targetAgendaId, pending.targetDateKey),
+      { retries: 4, delayMs: 900, label: 'reagendar' }
+    );
+  }
+
+  const rows = (existing && existing.rows && existing.rows.length) ? [...existing.rows] : [];
+  // Columnas/meta/colores rojos: SIEMPRE los del destino (Abner), nunca
+  // se traen ni se mezclan con los del origen (Dina) — la estructura de
+  // columnas de la agenda destino no se toca en absoluto.
+  const extraColumns = (existing && existing.extraColumns) || [];
+  const meta = (existing && existing.meta) || {};
+  const redColumns = (existing && existing.redColumns) || {};
+
+  const leadIds = targetConfig.leadingColumns.map(c => c.id);
+  const unidadTargetId = ['unidad', 'unid', 'cant'].find(id => leadIds.includes(id));
+
+  let targetRow = rows.find(r => r.rescheduleId === pending.rescheduleId);
+  if (targetRow) {
+    // Ya existía (de un intento anterior de este mismo reagendado): se
+    // actualizan SOLO estos 3 campos, todo lo demás de la fila queda
+    // intacto (casillas, marcas, color de fila, etc.).
+    targetRow.cells = { ...targetRow.cells };
+    if (leadIds.includes('doctor')) targetRow.cells['doctor'] = pending.doctor;
+    if (leadIds.includes('desc')) targetRow.cells['desc'] = pending.descripcion;
+    if (unidadTargetId) targetRow.cells[unidadTargetId] = pending.unidad;
+  } else {
+    targetRow = defaultRow();
+    targetRow.rescheduleId = pending.rescheduleId;
+    const cellsToCopy = {};
+    if (leadIds.includes('doctor')) cellsToCopy['doctor'] = pending.doctor;
+    if (leadIds.includes('desc')) cellsToCopy['desc'] = pending.descripcion;
+    if (unidadTargetId) cellsToCopy[unidadTargetId] = pending.unidad;
+    targetRow.cells = cellsToCopy;
+    rows.push(targetRow);
+  }
+
+  await fetchWithRetry(
+    () => autosaveAgendaDay(uid, pending.targetAgendaId, pending.targetDateKey, { rows, extraColumns, meta, redColumns }),
+    { retries: 4, delayMs: 900, label: 'reagendar' }
+  );
+  markAgendaAsSynced(storageAgendaId);
+  cacheAgendaDayWrite(pending.targetAgendaId, pending.targetDateKey, { rows, extraColumns, meta, redColumns });
+
+  // Si la agenda destino (misma agenda + mismo día) ya está abierta en
+  // pantalla, se actualiza SOLO esa fila puntual (doctor/desc/unidad) —
+  // nunca se reemplaza toda la tabla ni se toca la estructura de
+  // columnas/config del panel, que sigue siendo la del destino.
+  const openPanel = panels[targetInstanceKey];
+  if (openPanel && openPanel.agendaId === pending.targetAgendaId && openPanel.dateKey === pending.targetDateKey) {
+    let liveRow = openPanel.rows.find(r => r.rescheduleId === pending.rescheduleId);
+    if (liveRow) {
+      liveRow.cells = { ...liveRow.cells, ...targetRow.cells };
+    } else {
+      openPanel.rows.push({ ...targetRow, cells: { ...targetRow.cells } });
+    }
+    renderBody(targetInstanceKey);
+    renderFooter(targetInstanceKey);
+    updatePointsBadge(targetInstanceKey);
+  }
+}
+
+/**
+ * Reintenta todos los reagendados que quedaron pendientes (p. ej. porque
+ * Firebase estaba offline cuando se intentaron). Se llama al abrir
+ * Agendas y al recuperar la conexión — nunca depende únicamente de un
+ * setTimeout suelto. Idempotente: reintentar un pending ya confirmado no
+ * duplica nada gracias a rescheduleId.
+ */
+let flushingRescheduleQueue = false;
+async function flushRescheduleQueue(uid) {
+  if (flushingRescheduleQueue) return;
+  flushingRescheduleQueue = true;
+  try {
+    const queue = getRescheduleQueue();
+    for (const pending of queue) {
+      try {
+        await performReschedule(uid, pending);
+        dequeueReschedule(pending.rescheduleId);
+      } catch (e) {
+        console.error('[RESCHEDULE] ERROR:', pending.rescheduleId, e);
+      }
+    }
+  } finally {
+    flushingRescheduleQueue = false;
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Barra de herramientas: guardar, agregar/quitar fila y columna, descargar
+// (una barra por instancia — AM y PM tienen botones y estado 100% propios)
+// ----------------------------------------------------------------------------
 function wireToolbar(key) {
   const saveBtn = g('btn-save-agenda', key);
   if (saveBtn) {
@@ -663,16 +1045,28 @@ function wireToolbar(key) {
       const state = panels[key];
       if (!state) return;
       setSaveStatus(key, 'Guardando…', 'saving');
+      const payload = {
+        rows: state.rows, extraColumns: state.extraColumns, meta: state.meta, redColumns: state.redColumns
+      };
+      const payloadJson = JSON.stringify(payload);
+      saveAgendaDraft(state.agendaId, state.dateKey, payload);
       try {
-        await fetchWithRetry(() => saveAgendaDay(state.uid, state.agendaId, state.dateKey, {
-          rows: state.rows, extraColumns: state.extraColumns, meta: state.meta, redColumns: state.redColumns
-        }), { label: 'guardar agenda' });
+        await fetchWithRetry(() => saveAgendaDay(state.uid, state.agendaId, state.dateKey, payload), { label: 'guardar agenda' });
         markAgendaAsSynced(state.storageAgendaId);
+        cacheAgendaDayWrite(state.agendaId, state.dateKey, payload);
+        // Igual que en el autoguardado: solo se borra si el borrador
+        // sigue siendo EXACTAMENTE el que se acaba de confirmar — si el
+        // usuario editó de nuevo mientras esta escritura estaba en
+        // curso, ese borrador más nuevo no se toca aquí.
+        const stillCurrent = getAgendaDraft(state.agendaId, state.dateKey);
+        if (stillCurrent && JSON.stringify(stillCurrent.data) === payloadJson) {
+          clearAgendaDraft(state.agendaId, state.dateKey);
+        }
         setSaveStatus(key, 'Guardado ✓', 'saved');
         showToast(state.label ? `Agenda (${state.label}) guardada en el historial` : 'Agenda guardada en el historial');
       } catch (e) {
         console.error(`Error al guardar agenda (${state.agendaId}${suf(key)}):`, e);
-        setSaveStatus(key, 'Error al guardar', 'error');
+        setSaveStatus(key, 'No se pudo guardar — se reintentará solo (tus cambios están a salvo localmente)', 'error');
         showToast(describeFirestoreError(e), true);
       }
     };
@@ -793,6 +1187,9 @@ function openAddColumnModal(key, isPoint) {
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(); });
 }
 
+// ----------------------------------------------------------------------------
+// Guardado
+// ----------------------------------------------------------------------------
 function setSaveStatus(key, text, cls) {
   const el = g('agenda-save-status', key);
   if (!el) return;
@@ -800,21 +1197,36 @@ function setSaveStatus(key, text, cls) {
   el.className = 'save-status' + (cls ? ' ' + cls : '');
 }
 
+/** Devuelve (creando si hace falta) la función de autoguardado debounced propia de esta instancia. */
 function getAutosaveFn(key) {
   if (!autosaveFns[key]) {
     autosaveFns[key] = debounce(async () => {
       const state = panels[key];
       if (!state) return;
       setSaveStatus(key, 'Guardando…', 'saving');
+      const payload = {
+        rows: state.rows, extraColumns: state.extraColumns, meta: state.meta, redColumns: state.redColumns
+      };
+      const payloadJson = JSON.stringify(payload);
       try {
-        await fetchWithRetry(() => autosaveAgendaDay(state.uid, state.agendaId, state.dateKey, {
-          rows: state.rows, extraColumns: state.extraColumns, meta: state.meta, redColumns: state.redColumns
-        }), { retries: 1, label: 'autoguardado' });
+        await fetchWithRetry(() => autosaveAgendaDay(state.uid, state.agendaId, state.dateKey, payload), { retries: 1, label: 'autoguardado' });
         markAgendaAsSynced(state.storageAgendaId);
+        cacheAgendaDayWrite(state.agendaId, state.dateKey, payload);
+        // Solo se borra el borrador local si sigue siendo EXACTAMENTE el
+        // mismo que se acaba de confirmar — si el usuario volvió a editar
+        // mientras esta escritura estaba en curso, scheduleAutosave ya
+        // guardó un borrador más nuevo, y ese no se toca aquí (Firestore
+        // lo recibirá en el próximo ciclo del debounce).
+        const stillCurrent = getAgendaDraft(state.agendaId, state.dateKey);
+        if (stillCurrent && JSON.stringify(stillCurrent.data) === payloadJson) {
+          clearAgendaDraft(state.agendaId, state.dateKey);
+        }
         setSaveStatus(key, 'Guardado automáticamente', 'saved');
       } catch (e) {
         console.error(`Error en autoguardado (${state.agendaId}${suf(key)}):`, e);
-        setSaveStatus(key, 'No se pudo guardar automáticamente', 'error');
+        // El borrador NO se toca: sigue en localStorage tal cual, listo
+        // para reintentarse (flushAgendaDrafts) sin perder nada.
+        setSaveStatus(key, 'No se pudo guardar — se reintentará solo (tus cambios están a salvo localmente)', 'error');
       }
     }, 1500);
   }
@@ -822,5 +1234,67 @@ function getAutosaveFn(key) {
 }
 
 function scheduleAutosave(key) {
+  const state = panels[key];
+  if (state) {
+    // Se guarda de inmediato, de forma síncrona — nunca hay una ventana
+    // en la que el usuario ya editó pero todavía no exista un borrador
+    // duradero. El envío real a Firestore sigue debounced (abajo).
+    saveAgendaDraft(state.agendaId, state.dateKey, {
+      rows: state.rows, extraColumns: state.extraColumns, meta: state.meta, redColumns: state.redColumns
+    });
+  }
   getAutosaveFn(key)();
 }
+
+let flushingAgendaDrafts = false;
+/**
+ * Reintenta enviar a Firestore todos los borradores duraderos pendientes
+ * (de cualquier agenda+día, no solo la que está abierta ahora mismo) —
+ * por ejemplo, los que quedaron sin confirmar porque Firestore estaba
+ * offline en una sesión anterior y el navegador se cerró o se recargó la
+ * página. Se salta cualquier agenda+día que ya tenga un panel abierto en
+ * pantalla (ese panel ya se sincroniza solo con su propio autoguardado),
+ * para no disparar dos escrituras simultáneas del mismo dato.
+ */
+async function flushAgendaDrafts(uid) {
+  if (flushingAgendaDrafts) return;
+  flushingAgendaDrafts = true;
+  try {
+    const drafts = listAgendaDrafts();
+    for (const { agendaId, dateKey } of drafts) {
+      const openInstanceKey = Object.keys(panels).find(k => {
+        const p = panels[k];
+        return p && p.agendaId === agendaId && p.dateKey === dateKey;
+      });
+      if (openInstanceKey !== undefined) continue;
+
+      const draftBefore = getAgendaDraft(agendaId, dateKey);
+      if (!draftBefore) continue;
+      const draftBeforeDataJson = JSON.stringify(draftBefore.data);
+
+      try {
+        await fetchWithRetry(() => autosaveAgendaDay(uid, agendaId, dateKey, draftBefore.data), { retries: 1, delayMs: 700, label: 'sincronizar borrador' });
+        cacheAgendaDayWrite(agendaId, dateKey, draftBefore.data);
+        markAgendaAsSynced(agendaId);
+        // Igual que en el autoguardado normal: solo se borra si nadie lo
+        // cambió mientras se enviaba.
+        const draftAfter = getAgendaDraft(agendaId, dateKey);
+        if (draftAfter && JSON.stringify(draftAfter.data) === draftBeforeDataJson) {
+          clearAgendaDraft(agendaId, dateKey);
+        }
+      } catch (e) {
+        console.error('[DRAFT] No se pudo sincronizar un borrador pendiente todavía:', agendaId, dateKey, e);
+      }
+    }
+  } finally {
+    flushingAgendaDrafts = false;
+  }
+}
+
+window.addEventListener('online', () => {
+  const currentUser = getCurrentUser();
+  if (currentUser) {
+    flushAgendaDrafts(currentUser.uid);
+    flushRescheduleQueue(currentUser.uid);
+  }
+});

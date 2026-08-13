@@ -1,5 +1,14 @@
+// ============================================================================
+// export.js
+// ----------------------------------------------------------------------------
+// Descarga de una tabla (agenda o calendario) como imagen PNG o JPG, tal
+// como se ve en pantalla. Usa html2canvas, cargado bajo demanda desde CDN
+// (ver loadHtml2Canvas) solo cuando el usuario realmente descarga algo.
+// ============================================================================
+
 let html2canvasLoadPromise = null;
 
+/** Carga html2canvas desde CDN una sola vez, solo cuando realmente se necesita (al descargar). */
 function loadHtml2Canvas() {
   if (typeof html2canvas !== 'undefined') return Promise.resolve();
   if (html2canvasLoadPromise) return html2canvasLoadPromise;
@@ -13,6 +22,12 @@ function loadHtml2Canvas() {
   return html2canvasLoadPromise;
 }
 
+/**
+ * Captura un elemento del DOM y dispara la descarga como imagen.
+ * @param {HTMLElement} element - Elemento a capturar (la tabla o el calendario).
+ * @param {string} filename - Nombre de archivo SIN extensión.
+ * @param {'png'|'jpg'} format
+ */
 export async function captureElementToImage(element, filename, format) {
   await loadHtml2Canvas();
   if (typeof html2canvas === 'undefined') {

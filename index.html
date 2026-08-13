@@ -11,16 +11,22 @@
 <link rel="preconnect" href="https://identitytoolkit.googleapis.com">
 <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="css/styles.css?v23">
+<link rel="stylesheet" href="css/styles.css?v30">
 <link rel="preload" href="assets/images-removebg-preview.png" as="image">
 </head>
 <body>
 
+<!-- ==========================================================================
+     PANTALLA DE CARGA — visible mientras se verifica el estado de sesión
+     ========================================================================== -->
 <div id="view-loading" class="loading-screen view active">
   <div class="spinner"></div>
   <p>Cargando…</p>
 </div>
 
+<!-- ==========================================================================
+     BIENVENIDA
+     ========================================================================== -->
 <div id="view-welcome" class="auth-shell view view-fullscreen">
   <div class="auth-card">
     <img src="assets/images-removebg-preview.png" alt="Logotipo de la empresa" class="brand-logo">
@@ -34,6 +40,9 @@
   </div>
 </div>
 
+<!-- ==========================================================================
+     INICIAR SESIÓN
+     ========================================================================== -->
 <div id="view-login" class="auth-shell view view-fullscreen">
   <div class="auth-card">
     <img src="assets/images-removebg-preview.png" alt="Logotipo de la empresa" class="brand-logo">
@@ -63,6 +72,9 @@
   </div>
 </div>
 
+<!-- ==========================================================================
+     REGISTRARSE
+     ========================================================================== -->
 <div id="view-register" class="auth-shell view view-fullscreen">
   <div class="auth-card">
     <img src="assets/images-removebg-preview.png" alt="Logotipo de la empresa" class="brand-logo">
@@ -96,6 +108,9 @@
   </div>
 </div>
 
+<!-- ==========================================================================
+     APP (post-login): barra lateral + contenido
+     ========================================================================== -->
 <div id="view-app" class="app-shell view">
 
   <button class="menu-toggle" id="menu-toggle" aria-label="Abrir menú">
@@ -149,6 +164,7 @@
 
     <main class="content">
 
+      <!-- ---------- DASHBOARD ---------- -->
       <section id="view-dashboard" class="subview active">
         <h2 class="dash-greeting" id="dash-greeting">—</h2>
         <p class="dash-date" id="dash-date">—</p>
@@ -156,6 +172,13 @@
         <div class="card-grid" id="dashboard-cards"></div>
       </section>
 
+      <!-- ---------- AGENDA (tabla) ----------
+           El contenido de esta vista (encabezado, tabla y pie) se genera
+           dinámicamente desde js/agenda.js dentro de #agenda-container.
+           Para la mayoría de agendas se pinta un solo panel (misma
+           estructura que antes); para Cony (Yesos) se pintan dos paneles
+           independientes — AM y PM — dentro de una rejilla de dos
+           columnas. Ver js/agenda.js. -->
       <section id="view-agenda" class="subview">
         <button class="back-link" data-nav="dashboard">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
@@ -164,11 +187,13 @@
         <div id="agenda-container"></div>
       </section>
 
+      <!-- ---------- HISTORIAL: selección de persona ---------- -->
       <section id="view-historial-select" class="subview">
         <p class="select-prompt">¿A qué historial deseas acceder?</p>
         <div class="person-grid" id="historial-person-grid"></div>
       </section>
 
+      <!-- ---------- HISTORIAL: lista de agendas guardadas ---------- -->
       <section id="view-historial-list" class="subview">
         <button class="back-link" data-nav="historial-select">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
@@ -178,11 +203,13 @@
         <div class="history-list" id="historial-list-container"></div>
       </section>
 
+      <!-- ---------- CALENDARIO: selección de mes ---------- -->
       <section id="view-calendario-select" class="subview">
         <p class="select-prompt">¿A qué mes deseas acceder?</p>
         <div class="month-grid" id="calendario-month-grid"></div>
       </section>
 
+      <!-- ---------- CALENDARIO: vista mensual ---------- -->
       <section id="view-calendario-month" class="subview">
         <button class="back-link" data-nav="calendario-select">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
@@ -207,10 +234,12 @@
         <span class="save-status" id="calendar-save-status" style="display:block;margin-top:12px;"></span>
       </section>
 
+      <!-- ---------- CONTROL GENERAL ---------- -->
       <section id="view-control-general" class="subview">
         <div id="cg-container"></div>
       </section>
 
+      <!-- ---------- DATOS ---------- -->
       <section id="view-datos" class="subview">
         <div id="datos-container"></div>
       </section>
@@ -219,13 +248,28 @@
   </div>
 </div>
 
+<!-- ==========================================================================
+     MODAL genérico (nota del día / entrada numérica / confirmaciones)
+     ========================================================================== -->
 <div id="modal-overlay" class="modal-overlay hidden">
   <div class="modal-box" id="modal-box"></div>
 </div>
 
+<!-- ==========================================================================
+     TOAST
+     ========================================================================== -->
 <div id="toast" class="toast"><span class="toast-dot"></span><span id="toast-text"></span></div>
 
-<script type="module" src="js/main.js?v23"></script>
+<!-- ==========================================================================
+     html2canvas se carga bajo demanda desde js/export.js solo cuando el
+     usuario realmente descarga una imagen (Descargar), en vez de bloquear
+     la carga inicial de la página con esta librería pesada.
+     ========================================================================== -->
+
+<!-- ==========================================================================
+     Módulos de la aplicación (ES6)
+     ========================================================================== -->
+<script type="module" src="js/main.js?v30"></script>
 
 </body>
 </html>

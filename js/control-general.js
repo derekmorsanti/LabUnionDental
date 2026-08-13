@@ -1,28 +1,38 @@
-import { getCurrentUser } from './auth.js?v23';
+// ============================================================================
+// control-general.js — módulo de gestión de registros/casos, organizado por
+// MES (agosto 2026 → diciembre 2027). Un documento por registro en Firestore
+// (users/{uid}/controlGeneral/{id}), con un campo `monthKey` ("AAAA-MM") que
+// indica a qué mes pertenece la fila. Usa los catálogos de Datos para
+// alimentar sus listas desplegables.
+// ============================================================================
+
+import { getCurrentUser } from './auth.js?v30';
 import {
   listControlGeneral, saveControlGeneralRecord, deleteControlGeneralRecord,
   getAgendaDay, autosaveAgendaDay
-} from './data-store.js?v23';
-import { getAgendaConfig, defaultRow } from './agenda-configs.js?v23';
-import { ensureCatalogsLoaded, getCatalogItems } from './datos.js?v23';
-import { UNIDADES_1_32 } from './datos-seed.js?v23';
+} from './data-store.js?v30';
+import { getAgendaConfig, defaultRow } from './agenda-configs.js?v30';
+import { ensureCatalogsLoaded, getCatalogItems } from './datos.js?v30';
+import { UNIDADES_1_32 } from './datos-seed.js?v30';
 import {
   escapeHtml, debounce, toNumber, round2, generateId, dateKeyToday,
   getAvailableMonths, MESES_ES, capitalize, getGuatemalaParts,
-  fetchWithRetry, describeFirestoreError
-} from './utils.js?v23';
-import { openModal, closeModal, showToast } from './ui-helpers.js?v23';
+  fetchWithRetry, describeFirestoreError, markAgendaAsSynced, shiftSaturdayToMonday, cacheAgendaDayWrite,
+  getCachedAgendaDayWrite, buildRescheduleId, getRescheduleQueue, enqueueReschedule, dequeueReschedule
+} from './utils.js?v30';
+import { openModal, closeModal, showToast } from './ui-helpers.js?v30';
 
-let records = [];
+let records = [];        // TODOS los registros del usuario (una sola carga por sesión)
 let uid = null;
 let loaded = false;
 let loadingPromise = null;
 let searchText = '';
-let currentMonthKey = null;
+let currentMonthKey = null; // null = pantalla de selección de mes
 const autosaveFns = {};
 let resumenVisible = false;
 let selectedDoctor = null;
 
+// Fila → agenda destino: doctor/px, descripción y cantidad se copian tal cual.
 const AGREGAR_TARGETS = [
   { label: 'Metales', agendaId: 'abner' },
   { label: 'Pretallado', agendaId: 'eliu' },
@@ -71,6 +81,7 @@ function computeTiempo(rec) {
   return Math.round((b - a) / 86400000);
 }
 
+// ----------------------------------------------------------------------------
 async function loadRecordsOnce() {
   if (loaded) return records;
   if (loadingPromise) return loadingPromise;
@@ -90,9 +101,16 @@ export async function renderControlGeneral(navigate) {
   if (!user) { showToast('Tu sesión no está activa. Vuelve a iniciar sesión.', true); return; }
   uid = user.uid;
 
+  // Reintenta en segundo plano cualquier reagendado que haya quedado
+  // pendiente (p. ej. Firebase estaba offline cuando se intentó).
+  flushRescheduleQueue(uid);
+
   currentMonthKey = null;
   paintMonthSelect();
 
+  // Catálogos y registros se cargan en segundo plano (no bloquean la
+  // pantalla de selección de mes) y se reutilizan sin volver a pedirlos a
+  // Firebase mientras dure la sesión.
   ensureCatalogsLoaded(uid).catch(() => {});
   loadRecordsOnce().catch(e => {
     console.error('Error al cargar Control General:', e);
@@ -100,6 +118,9 @@ export async function renderControlGeneral(navigate) {
   });
 }
 
+// ----------------------------------------------------------------------------
+// Selección de mes (enero 2026 → diciembre 2028)
+// ----------------------------------------------------------------------------
 function paintMonthSelect() {
   const container = document.getElementById('cg-container');
   const months = getAvailableMonths(2026, 1, 2028, 12);
@@ -143,6 +164,9 @@ function showMonthLoading() {
   container.appendChild(loadingEl);
 }
 
+// ----------------------------------------------------------------------------
+// Tabla del mes seleccionado
+// ----------------------------------------------------------------------------
 function monthRecords() {
   return records.filter(r => r.monthKey === currentMonthKey);
 }
@@ -349,6 +373,9 @@ function refreshRowTotalsOnly(tr, rec) {
   tr.classList.toggle('cg-row-cancelado', (rec.status || '').toUpperCase() === 'CANCELADO');
 }
 
+// ----------------------------------------------------------------------------
+// "+ Agregar fila" — reemplaza al antiguo "Nuevo registro"
+// ----------------------------------------------------------------------------
 function setSaveStatus(text, cls) {
   const el = document.getElementById('cg-save-status');
   if (!el) return;
@@ -407,61 +434,173 @@ function scheduleAutosave(rec) {
   autosaveFns[rec.id]();
 }
 
+// ----------------------------------------------------------------------------
+// Botón "AGREGAR" por fila → crear fila en la agenda del día correspondiente,
+// en la misma posición lógica (índice) dentro de esa agenda.
+// ----------------------------------------------------------------------------
 function openAgregarModal(recId) {
+  console.log('[RESCHEDULE] openAgregarModal (control-general)', recId);
   const rec = records.find(r => r.id === recId);
-  if (!rec) return;
-  const idx = filteredRecords().findIndex(r => r.id === recId);
+  if (!rec) { console.error('[RESCHEDULE] ERROR: no se encontró el registro', recId); return; }
 
   const box = openModal(`
     <h3>Agregar a una agenda</h3>
     <p>Se creará una fila nueva con Doctor/PX, Descripción y Cantidad. Los demás campos quedan vacíos para editar ahí.</p>
+    <div class="field">
+      <label for="cg-agregar-fecha">Fecha destino</label>
+      <input type="date" id="cg-agregar-fecha" value="${escapeHtml(rec.fechaIngreso || dateKeyToday())}">
+    </div>
+    <p style="font-size:12.5px;color:var(--ink-muted);margin-top:-10px;margin-bottom:18px;">Si la fecha elegida cae en sábado, se reagenda automáticamente al lunes siguiente.</p>
     <div class="modal-actions" style="flex-wrap:wrap;justify-content:center;">
       ${AGREGAR_TARGETS.map(t => `<button class="btn btn-outline" data-target="${t.agendaId}">${escapeHtml(t.label)}</button>`).join('')}
     </div>
   `);
+  const fechaInput = box.querySelector('#cg-agregar-fecha');
+
   box.querySelectorAll('[data-target]').forEach(btn => {
     btn.addEventListener('click', async () => {
+      const targetAgendaId = btn.dataset.target;
+      console.log('[RESCHEDULE] confirmar reagendamiento (control-general)', targetAgendaId);
+      const target = AGREGAR_TARGETS.find(t => t.agendaId === targetAgendaId);
+      const targetLabel = target ? target.label : targetAgendaId;
+      const rawDate = (fechaInput && fechaInput.value) ? fechaInput.value : (rec.fechaIngreso || dateKeyToday());
       closeModal();
-      try {
-        await addRowToAgenda(btn.dataset.target, rec, idx);
-        const target = AGREGAR_TARGETS.find(t => t.agendaId === btn.dataset.target);
-        showToast(`Fila agregada a la agenda de ${target ? target.label : btn.dataset.target}`);
-      } catch (e) {
-        console.error('Error al agregar fila a la agenda:', e);
-        showToast(describeFirestoreError(e), true);
+
+      const targetConfig = getAgendaConfig(targetAgendaId);
+      if (!targetConfig) {
+        showToast(`No se encontró la configuración de la agenda destino "${targetAgendaId}".`, true);
+        return;
+      }
+      const baseDateKey = shiftSaturdayToMonday(rawDate);
+      const targetDateKey = targetConfig.splitAmPm ? `${baseDateKey}-AM` : baseDateKey;
+      const wasShifted = baseDateKey !== rawDate;
+
+      // Solo estos 3 valores viajan al reagendar — nunca casillas marcadas.
+      // Se guardan como "pending" ANTES de intentar Firebase.
+      const pending = {
+        rescheduleId: buildRescheduleId({
+          sourceAgendaId: 'control-general', sourceDateKey: currentMonthKey || dateKeyToday(), sourceRowId: rec.id,
+          targetAgendaId, targetDateKey
+        }),
+        sourceAgendaId: 'control-general', sourceDateKey: currentMonthKey || dateKeyToday(), sourceRowId: rec.id,
+        targetAgendaId, targetDateKey,
+        doctor: rec.doctor || '', descripcion: rec.descripcion || '', unidad: rec.unidades || '',
+        createdAt: Date.now()
+      };
+
+      const result = await scheduleReschedule(uid, pending);
+      if (result.ok) {
+        showToast(
+          wasShifted
+            ? `Fila agregada a la agenda de ${targetLabel} — reagendada al lunes ${baseDateKey} (la fecha elegida caía en sábado)`
+            : `Fila agregada a la agenda de ${targetLabel} (${baseDateKey})`
+        );
+      } else {
+        showToast(
+          `No se pudo confirmar el reagendado a ${targetLabel} por ahora (sin conexión) — doctor/descripción/unidad quedaron guardados y se reintentará solo en cuanto vuelva la señal.`,
+          true
+        );
       }
     });
   });
 }
 
-async function addRowToAgenda(targetAgendaId, rec, position) {
-  const targetConfig = getAgendaConfig(targetAgendaId);
-  if (!targetConfig) return;
-
-  const baseDateKey = rec.fechaIngreso || dateKeyToday();
-  const dateKey = targetConfig.splitAmPm ? `${baseDateKey}-AM` : baseDateKey;
-
-  const existing = await fetchWithRetry(() => getAgendaDay(uid, targetAgendaId, dateKey), { retries: 1, label: 'agregar fila' });
-  const rows = (existing && existing.rows) ? [...existing.rows] : [];
-  const extraColumns = (existing && existing.extraColumns) || [];
-  const meta = (existing && existing.meta) || {};
-
-  const newRow = defaultRow();
-  const leadIds = targetConfig.leadingColumns.map(c => c.id);
-  if (leadIds.includes('doctor')) newRow.cells['doctor'] = rec.doctor || '';
-  if (leadIds.includes('desc')) newRow.cells['desc'] = rec.descripcion || '';
-  const unidadTargetId = ['unidad', 'unid', 'cant'].find(id => leadIds.includes(id));
-  if (unidadTargetId) newRow.cells[unidadTargetId] = rec.unidades || '';
-
-  const insertAt = Math.max(0, Math.min(position >= 0 ? position : rows.length, rows.length));
-  rows.splice(insertAt, 0, newRow);
-
-  await fetchWithRetry(
-    () => autosaveAgendaDay(uid, targetAgendaId, dateKey, { rows, extraColumns, meta }),
-    { retries: 1, label: 'agregar fila' }
-  );
+/** Guarda el pending en la cola persistente ANTES de tocar Firebase; solo lo saca de la cola si Firebase confirma. */
+async function scheduleReschedule(uid, pending) {
+  console.log('[RESCHEDULE] scheduleReschedule (control-general)', pending.rescheduleId);
+  enqueueReschedule(pending);
+  try {
+    await performReschedule(uid, pending);
+    dequeueReschedule(pending.rescheduleId);
+    return { ok: true };
+  } catch (e) {
+    console.error('[RESCHEDULE] ERROR:', e);
+    return { ok: false, error: e };
+  }
 }
 
+/** Escribe (o actualiza, de forma idempotente vía rescheduleId) SOLO doctor/descripción/unidad en la fila destino — nunca casillas, columnas ni config del destino. */
+async function performReschedule(uid, pending) {
+  console.log('[RESCHEDULE] performReschedule (control-general)', pending.rescheduleId);
+  const targetConfig = getAgendaConfig(pending.targetAgendaId);
+  if (!targetConfig) {
+    const err = new Error(`No se encontró la configuración de la agenda destino "${pending.targetAgendaId}".`);
+    console.error('[RESCHEDULE] ERROR:', err);
+    throw err;
+  }
+
+  const storageAgendaId = targetConfig.splitAmPm ? `${pending.targetAgendaId}-am` : pending.targetAgendaId;
+
+  let existing = getCachedAgendaDayWrite(pending.targetAgendaId, pending.targetDateKey);
+  if (!existing) {
+    existing = await fetchWithRetry(
+      () => getAgendaDay(uid, pending.targetAgendaId, pending.targetDateKey),
+      { retries: 4, delayMs: 900, label: 'reagendar' }
+    );
+  }
+
+  const rows = (existing && existing.rows && existing.rows.length) ? [...existing.rows] : [];
+  const extraColumns = (existing && existing.extraColumns) || [];
+  const meta = (existing && existing.meta) || {};
+  const redColumns = (existing && existing.redColumns) || {};
+
+  const leadIds = targetConfig.leadingColumns.map(c => c.id);
+  const unidadTargetId = ['unidad', 'unid', 'cant'].find(id => leadIds.includes(id));
+
+  let targetRow = rows.find(r => r.rescheduleId === pending.rescheduleId);
+  if (targetRow) {
+    targetRow.cells = { ...targetRow.cells };
+    if (leadIds.includes('doctor')) targetRow.cells['doctor'] = pending.doctor;
+    if (leadIds.includes('desc')) targetRow.cells['desc'] = pending.descripcion;
+    if (unidadTargetId) targetRow.cells[unidadTargetId] = pending.unidad;
+  } else {
+    targetRow = defaultRow();
+    targetRow.rescheduleId = pending.rescheduleId;
+    const cellsToCopy = {};
+    if (leadIds.includes('doctor')) cellsToCopy['doctor'] = pending.doctor;
+    if (leadIds.includes('desc')) cellsToCopy['desc'] = pending.descripcion;
+    if (unidadTargetId) cellsToCopy[unidadTargetId] = pending.unidad;
+    targetRow.cells = cellsToCopy;
+    rows.push(targetRow);
+  }
+
+  await fetchWithRetry(
+    () => autosaveAgendaDay(uid, pending.targetAgendaId, pending.targetDateKey, { rows, extraColumns, meta, redColumns }),
+    { retries: 4, delayMs: 900, label: 'reagendar' }
+  );
+  markAgendaAsSynced(storageAgendaId);
+  cacheAgendaDayWrite(pending.targetAgendaId, pending.targetDateKey, { rows, extraColumns, meta, redColumns });
+}
+
+let flushingRescheduleQueueCG = false;
+async function flushRescheduleQueue(uid) {
+  if (flushingRescheduleQueueCG) return;
+  flushingRescheduleQueueCG = true;
+  try {
+    const queue = getRescheduleQueue();
+    for (const pending of queue) {
+      try {
+        await performReschedule(uid, pending);
+        dequeueReschedule(pending.rescheduleId);
+      } catch (e) {
+        console.error('Reagendado pendiente sigue sin poder confirmarse:', pending.rescheduleId, e);
+      }
+    }
+  } finally {
+    flushingRescheduleQueueCG = false;
+  }
+}
+
+window.addEventListener('online', () => {
+  if (uid) flushRescheduleQueue(uid);
+});
+
+// ----------------------------------------------------------------------------
+// RESUMEN POR DOCTOR + ESTADO DE CUENTA
+// Reutiliza `records` (ya cargados en memoria por loadRecordsOnce) y las
+// funciones de cálculo existentes (computeTotal/computeAbonoAcumulado/
+// computeSaldo). No vuelve a pedir nada a Firestore.
+// ----------------------------------------------------------------------------
 function toggleResumenDoctores() {
   resumenVisible = !resumenVisible;
   const btn = document.getElementById('cg-resumen-btn');

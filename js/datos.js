@@ -1,17 +1,24 @@
-import { getCurrentUser } from './auth.js?v23';
-import { getAllDatosCatalogs, saveDatosCatalogs, saveDatosCatalog } from './data-store.js?v23';
-import { DATOS_CATALOGS } from './datos-seed.js?v23';
-import { escapeHtml, debounce, fetchWithRetry, describeFirestoreError } from './utils.js?v23';
-import { showToast } from './ui-helpers.js?v23';
+// ============================================================================
+// datos.js — catálogos reutilizables (Doctores, Etapas, Costos, Destinos,
+// Status, Corrección/Repetición). Fuente de las listas desplegables de
+// Control General y de las Agendas.
+// ============================================================================
 
-let state = {};
+import { getCurrentUser } from './auth.js?v30';
+import { getAllDatosCatalogs, saveDatosCatalogs, saveDatosCatalog } from './data-store.js?v30';
+import { DATOS_CATALOGS } from './datos-seed.js?v30';
+import { escapeHtml, debounce, fetchWithRetry, describeFirestoreError } from './utils.js?v30';
+import { showToast } from './ui-helpers.js?v30';
+
+let state = {}; // { [catalogId]: items[] }
 let activeTab = DATOS_CATALOGS[0].id;
 let filterText = '';
 let loaded = false;
-let loadingPromise = null;
+let loadingPromise = null; // evita llamadas duplicadas a Firebase si dos vistas piden los catálogos casi al mismo tiempo
 
 function catalogDef(id) { return DATOS_CATALOGS.find(c => c.id === id); }
 
+/** Carga los catálogos UNA sola vez por sesión (1 lectura), compartida entre Datos y Control General. */
 async function loadCatalogsOnce(uid) {
   if (loaded) return state;
   if (loadingPromise) return loadingPromise;
@@ -38,6 +45,9 @@ async function loadCatalogsOnce(uid) {
       console.error('Error al cargar catálogos:', e);
       DATOS_CATALOGS.forEach(cat => { state[cat.id] = [...cat.seed]; });
       showToast(`No se pudieron cargar los catálogos desde la nube — se muestra la lista por defecto. ${describeFirestoreError(e)}`, true);
+      // loaded queda en false a propósito: así, la próxima vez que se pida
+      // un catálogo (p. ej. al reconectar) se vuelve a intentar contra
+      // Firestore en vez de quedarse con el respaldo local para siempre.
     }
     return state;
   })();
@@ -139,6 +149,7 @@ function paintBody(uid) {
   document.getElementById('datos-bulk-add').addEventListener('click', () => addBulk(uid));
 }
 
+/** Repinta únicamente la lista de resultados (no el buscador ni el resto del panel), para que escribir en el buscador nunca le haga perder el foco al input. */
 function paintList(uid) {
   const listEl = document.getElementById('datos-list');
   if (!listEl) return;
@@ -243,6 +254,7 @@ function persistCatalog(uid, cat) {
   persistDebounced[cat.id]();
 }
 
+/** Catálogos en memoria — usado por Control General. Carga bajo demanda (comparte caché con Datos). */
 export async function ensureCatalogsLoaded(uid) {
   return loadCatalogsOnce(uid);
 }

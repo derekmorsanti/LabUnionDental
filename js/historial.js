@@ -1,8 +1,15 @@
-import { AGENDAS, getAgendaConfig, computeGrandTotal } from './agenda-configs.js?v23';
-import { getCurrentUser } from './auth.js?v23';
-import { listAgendaHistory } from './data-store.js?v23';
-import { escapeHtml, formatSavedTimestamp, round2, fetchWithRetry, describeFirestoreError } from './utils.js?v23';
+// ============================================================================
+// historial.js — selección de persona + lista de agendas guardadas.
+// ============================================================================
 
+import { AGENDAS, getAgendaConfig, computeGrandTotal } from './agenda-configs.js?v30';
+import { getCurrentUser } from './auth.js?v30';
+import { listAgendaHistory } from './data-store.js?v30';
+import { escapeHtml, formatSavedTimestamp, round2, fetchWithRetry, describeFirestoreError } from './utils.js?v30';
+
+// Token de la carga más reciente: si el usuario navega a otro historial
+// antes de que una carga anterior termine, esa respuesta tardía se
+// descarta en vez de sobrescribir lo que ya está en pantalla.
 let listToken = 0;
 
 export function renderHistorialSelect(navigate) {
@@ -98,6 +105,9 @@ export async function renderHistorialList(agendaId, navigate) {
 
     const ts = formatSavedTimestamp(savedDate);
 
+    // Para agendas divididas en tandas (p. ej. Cony), la dateKey guardada
+    // lleva un sufijo "-AM"/"-PM" (ver agenda.js). Lo mostramos aquí para
+    // distinguir cada tanda dentro del historial del mismo día.
     const dateSuffix = (item.dateKey || '').slice(10);
     const sessionLabel = dateSuffix === '-AM' ? 'AM' : (dateSuffix === '-PM' ? 'PM' : '');
 

@@ -1,19 +1,39 @@
-import { getCurrentUser } from './auth.js?v23';
-import { getCalendarMonth, saveCalendarMonth } from './data-store.js?v23';
-import { forceReconnectFirestore } from './firebase-config.js?v23';
-import { captureElementToImage } from './export.js?v23';
-import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v23';
+// ============================================================================
+// calendario.js — selección de mes + vista mensual con notas por día.
+// ============================================================================
+
+import { getCurrentUser } from './auth.js?v30';
+import { getCalendarMonth, saveCalendarMonth } from './data-store.js?v30';
+import { forceReconnectFirestore } from './firebase-config.js?v30';
+import { captureElementToImage } from './export.js?v30';
+import { openModal, closeModal, showToast, openDownloadModal } from './ui-helpers.js?v30';
 import {
   MESES_ES, getAvailableMonths, getMonthMeta, getGuatemalaParts,
   escapeHtml, capitalize, debounce, fetchWithRetry, describeFirestoreError, withTimeout
-} from './utils.js?v23';
+} from './utils.js?v30';
 
 let monthState = { key: null, notes: {} };
+// Año/mes del grid actualmente pintado — el listener delegado de clic en
+// los días se adjunta una sola vez sobre el contenedor, así que necesita
+// leer estos valores en el momento del clic (no capturarlos en un closure
+// creado en un paintGrid() anterior).
 let currentGridYear = null;
 let currentGridMonth = null;
+// Token del mes que se está cargando: si el usuario navega a otro mes
+// antes de que termine, esa respuesta tardía se descarta.
 let monthToken = 0;
+// true una vez que las notas guardadas de Firestore terminaron de cargar
+// (o falló la carga) para el mes actualmente abierto.
 let notesReady = false;
 
+// Formatos de nota soportados (compatibilidad hacia atrás):
+//   1) string plano                → nota de antes de cualquier subrayado.
+//   2) { text, underline }         → nota con subrayado de TODO el texto
+//                                     (versión anterior de esta función).
+//   3) { html }                    → formato actual: HTML saneado (solo
+//                                     texto y <u>) donde el subrayado
+//                                     aplica solo a la parte seleccionada.
+// noteHtmlOf() siempre devuelve HTML ya seguro para insertar en el DOM.
 function noteHtmlOf(raw) {
   if (!raw) return '';
   if (typeof raw === 'string') return escapeHtml(raw);
@@ -31,6 +51,12 @@ function noteHasContent(raw) {
   return !!(html && html.replace(/<[^>]*>/g, '').trim() !== '');
 }
 
+/**
+ * Reconstruye el innerHTML de un editor `contenteditable` conservando
+ * ÚNICAMENTE texto y etiquetas <u> (subrayado) y saltos de línea — así se
+ * evita guardar cualquier otra etiqueta (negrita, imágenes, scripts, etc.)
+ * que el navegador pudiera insertar al pegar contenido externo.
+ */
 function sanitizeNoteHtml(rootNode) {
   const walk = (node) => {
     let out = '';
@@ -84,6 +110,9 @@ export async function renderCalendarioMonth(monthKey, navigate) {
   if (!currentUser) { showToast('Tu sesión no está activa. Vuelve a iniciar sesión.', true); return; }
   const uid = currentUser.uid;
 
+  // Pinta la rejilla del calendario de inmediato, sin esperar a Firestore,
+  // para que siempre haya un calendario visible aunque la carga de notas
+  // tarde o falle (p. ej. sin conexión) — igual que Agendas.
   monthState = { key: monthKey, notes: {} };
   paintGrid(y, m);
 
@@ -118,6 +147,8 @@ export async function renderCalendarioMonth(monthKey, navigate) {
   if (myToken !== monthToken) return;
 
   notesReady = true;
+  // Combina las notas cargadas con cualquier nota que el usuario ya haya
+  // escrito localmente mientras se esperaba la respuesta de Firestore.
   monthState = { key: monthKey, notes: { ...notes, ...monthState.notes } };
   paintGrid(y, m);
 
@@ -191,6 +222,9 @@ function openDayNoteModal(day, year, month) {
   editable.innerHTML = currentHtml;
   editable.focus();
 
+  // Fuerza subrayado por etiqueta <u> (no por estilo inline), para que el
+  // saneador y la regla CSS "u{ text-decoration-color:#38bdf8 }" siempre
+  // apliquen de forma consistente sin importar el navegador.
   try { document.execCommand('styleWithCSS', false, false); } catch (_) {}
 
   box.querySelector('#day-note-underline-btn').addEventListener('click', () => {
@@ -203,6 +237,8 @@ function openDayNoteModal(day, year, month) {
     document.execCommand('underline');
   });
 
+  // Pegar solo texto plano: evita que el navegador inserte HTML externo
+  // (negritas, imágenes, enlaces, etc.) que luego habría que sanear.
   editable.addEventListener('paste', (e) => {
     e.preventDefault();
     const text = (e.clipboardData || window.clipboardData).getData('text/plain');
@@ -226,6 +262,9 @@ function openDayNoteModal(day, year, month) {
 const scheduleAutosave = debounce(() => saveNow(true), 1500);
 
 async function saveNow(isAuto) {
+  // Mientras las notas guardadas todavía se están cargando, no autoguardar
+  // para no sobreescribir notas de otros días con un estado incompleto
+  // (el botón "Guardar" manual está deshabilitado hasta que esto termine).
   if (!notesReady) return;
 
   setCalStatus('Guardando…', 'saving');
